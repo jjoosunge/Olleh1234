@@ -368,6 +368,34 @@ h3.lose {
   flex: 0 0 auto;
 }
 
+/* 이전 클립 재사용 */
+.clip-reuse {
+  margin-top: 10px;
+}
+
+.clip-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clip-row {
+  width: 100%;
+  text-align: left;
+  background: var(--code-bg);
+  color: var(--text-h);
+  border: 1px solid transparent;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.clip-row.active {
+  border-color: var(--accent);
+}
+
 /* 메타 코칭 (누적 리포트·통계) */
 .meta-panel {
   margin-bottom: 12px;

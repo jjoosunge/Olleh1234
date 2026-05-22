@@ -40,6 +40,7 @@ export type ClipMeta = {
   width: number | null
   height: number | null
   original_kept: boolean
+  uploaded_at?: number
 }
 
 export type AnalysisMetadata = {
@@ -151,6 +152,13 @@ export async function uploadClip(
     body: form,
   })
   return unwrap<ClipMeta>(res)
+}
+
+// 업로드된 클립 목록 (재사용용, 최신순).
+export async function listClips(): Promise<ClipMeta[]> {
+  const res = await fetch(`${BACKEND_URL}/api/clip/list`)
+  const data = await unwrap<{ clips: ClipMeta[] }>(res)
+  return data.clips
 }
 
 // 추출된 단일 프레임 이미지 URL (프레임 선택 썸네일용).

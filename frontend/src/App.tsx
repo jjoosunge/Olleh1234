@@ -13,6 +13,7 @@ import {
   getMetaStats,
   getSummoner,
   listAnalyses,
+  listClips,
   mapLimit,
   rateAnalysis,
   uploadClip,
@@ -137,6 +138,7 @@ function App() {
   const [file, setFile] = useState<File | null>(null)
   const [fpsInterval, setFpsInterval] = useState<number>(3)
   const [clip, setClip] = useState<ClipMeta | null>(null)
+  const [clips, setClips] = useState<ClipMeta[]>([])
   const [uploading, setUploading] = useState(false)
 
   // 4-1단계: 분석할 단일 프레임 선택 + CV 미리보기
@@ -227,6 +229,7 @@ function App() {
     try {
       const meta = await uploadClip(file, fpsInterval)
       setClip(meta)
+      loadClips()
     } catch (e) {
       setError(errMsg(e))
     } finally {
@@ -271,8 +274,17 @@ function App() {
     }
   }
 
+  async function loadClips() {
+    try {
+      setClips(await listClips())
+    } catch {
+      // 클립 목록 로드 실패는 조용히 무시
+    }
+  }
+
   useEffect(() => {
     loadHistory()
+    loadClips()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -486,6 +498,33 @@ function App() {
               {uploading ? '추출 중…' : '업로드 & 프레임 추출'}
             </button>
           </div>
+          {clips.length > 0 && (
+            <div className="clip-reuse">
+              <p className="muted small">또는 이전에 올린 클립 재사용:</p>
+              <ul className="clip-list">
+                {clips.map((c) => (
+                  <li key={c.clip_id}>
+                    <button
+                      type="button"
+                      className={`clip-row ${
+                        clip?.clip_id === c.clip_id ? 'active' : ''
+                      }`}
+                      onClick={() => {
+                        setClip(c)
+                        setSelectedFrame(null)
+                        setGameTime('')
+                        setFrameCv(null)
+                        setResult(null)
+                      }}
+                    >
+                      {c.original_filename || c.clip_id.slice(0, 8)} · 프레임{' '}
+                      {c.frame_count}장 · {c.duration_seconds}s
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {clip && (
             <p className="muted">
               프레임 {clip.frame_count}장 추출 · 영상{' '}

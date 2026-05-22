@@ -131,6 +131,27 @@ async def upload_clip(
         raise HTTPException(status_code=500, detail=f"Upload failed: {err}")
 
 
+@router.get("/list")
+def list_clips() -> dict:
+    """업로드된 클립 목록 (재사용용). 최신순.
+    경로가 /{clip_id}보다 먼저 등록돼야 'list'가 clip_id로 해석되지 않는다."""
+    if not CLIPS_DIR.exists():
+        return {"clips": []}
+    items = []
+    for d in CLIPS_DIR.iterdir():
+        meta_path = d / "metadata.json"
+        if not d.is_dir() or not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        meta["uploaded_at"] = meta_path.stat().st_mtime
+        items.append(meta)
+    items.sort(key=lambda m: m.get("uploaded_at", 0), reverse=True)
+    return {"clips": items}
+
+
 @router.get("/{clip_id}")
 def get_clip(clip_id: str) -> dict:
     return _load_metadata(clip_id)

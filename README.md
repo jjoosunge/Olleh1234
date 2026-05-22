@@ -360,6 +360,40 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 [Analyze] clip=8b3a8e21 mode=frame#7 t=8:32 timeline=Y frames=1 minimap=1 notes=3 examples=0 id=12 model=claude-sonnet-4-6 cost=$0.0488
 ```
 
+## 분석 히스토리 · 평가 · 피드백 학습
+
+모든 `/api/analyze` 결과는 SQLite(`db/knowledge.db`의 `analyses` 테이블)에
+영구 저장됩니다. 분석마다 **'장면·미니맵 판독'**과 **'코칭'** 두 축을 각각
+👍/👎로 평가할 수 있고, 두 축 모두 👍를 받은 분석은 질문 임베딩이
+`vec_analyses`(sqlite-vec)에 적재돼 — 이후 분석에서 새 질문과 의미가 비슷한
+과거 우수 분석이 검색돼 프롬프트에 '우수 예시'로 주입됩니다(in-context 학습).
+
+> Claude 모델 자체를 재학습하는 게 아니라, 좋게 평가된 과거 분석을 다음
+> 분석의 맥락 예시로 다시 넣어주는 방식입니다. 평가가 쌓일수록 예시가 좋아집니다.
+
+### 엔드포인트
+
+| 메서드 / 경로 | 설명 |
+| --- | --- |
+| `GET /api/analyses?limit=50&offset=0` | 분석 히스토리 목록 (최신순) |
+| `GET /api/analyses/{id}` | 분석 1건 상세 (코치 노트·주입 예시 포함) |
+| `POST /api/analyses/{id}/rating` | 평가 등록/수정 |
+| `DELETE /api/analyses/{id}` | 분석 기록 삭제 |
+
+평가 요청 본문 — `reading`/`coaching` 각각 `"up"` / `"down"` / `null`(미평가):
+
+```json
+{ "reading": "up", "coaching": "up" }
+```
+
+두 값 모두 `"up"`이면 그 분석이 학습 풀(`vec_analyses`)에 편입되고, 이후
+어느 한쪽이라도 풀리면 제외됩니다. 프론트는 두 축의 최종 상태를 항상 함께 보냅니다.
+
+### 프론트엔드
+
+분석 결과 화면과 페이지 하단 "분석 히스토리" 패널에서 평가할 수 있습니다.
+히스토리 항목을 펼치면 분석 전문 확인·평가·삭제가 가능합니다.
+
 ## 의존 도구
 
 - Python 3.11+

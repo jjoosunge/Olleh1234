@@ -11,7 +11,7 @@ FastAPI 백엔드 + React 프론트엔드 모노레포 구조이며, Riot 매치
 2. **솔로랭크 최근 20게임** — `queue=420` 필터로 솔로랭크만 노출
 3. **경기 선택 → 상세** — 양 팀 참가자·결과 표시
 4. **클립 업로드 & 장면 선택** — 1~3초당 1프레임 추출(FFmpeg) 후, 분석할 장면 1장을 선택. 선택 시 CV가 게임 시각(타이머 OCR)·화질을 자동 감지하며 게임 시각은 수정 가능
-5. **질문 → 코칭 답변** — 고정 프롬프트 + 선택 장면(전체 화면 + 미니맵 확대) + CV 자동 판독 + 타임라인 정밀 데이터(그 시점 10명 좌표·골드·레벨) + 매치 데이터 + 코치 노트/위키(RAG) + 질문을 Claude에 전달
+5. **질문 → 코칭 답변** — 고정 프롬프트 + 선택 장면(전체 화면 + 미니맵 확대) + CV 자동 판독 + 타임라인 정밀 데이터(그 시점 10명 좌표·골드·레벨) + 매치 데이터 + 코치 노트/위키(RAG) + 질문을 Claude에 전달. 답변은 토큰 단위로 실시간 표시(스트리밍)
 
 프론트엔드(`http://localhost:5173`)에서 위 5단계가 하나의 화면 흐름으로 구현돼 있습니다.
 
@@ -199,9 +199,10 @@ ffprobe -version
 | 메서드 / 경로 | 설명 |
 | --- | --- |
 | `POST /api/clip/upload` | multipart 영상 업로드 → 프레임 추출 |
+| `GET /api/clip/list` | 업로드된 클립 목록 (재사용용, 최신순) |
 | `GET /api/clip/{clip_id}` | metadata.json 반환 |
 | `GET /api/clip/{clip_id}/frames/{frame_number}` | 단일 프레임 이미지 (1부터) |
-| `GET /api/clip/{clip_id}/frames/{frame_number}/cv` | 프레임 CV 전처리 (화질·게임 시각·미니맵 점) |
+| `GET /api/clip/{clip_id}/frames/{frame_number}/cv` | 프레임 CV 전처리 (화질·게임 시각 자동 감지) |
 | `DELETE /api/clip/{clip_id}` | 클립 폴더 전체 삭제 |
 
 - 지원 확장자: `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`
@@ -209,6 +210,7 @@ ffprobe -version
 - `fps_interval`: **1초 / 2초 / 3초 중 선택** (기본 3초). 짧은 클립일수록 작은 값, 매크로 분석엔 3초 추천.
 - 저장 위치: `backend/uploads/clips/{clip_id}/frames/frame_0001.jpg ...`
 - 기본은 원본 영상 파일 삭제(프레임만 보관). 원본 유지하려면 `keep_original=true`.
+- **자동 정리**: 7일 경과 클립은 업로드 시·서버 기동 시 삭제. 분석에서 👎를 받은 클립(우수 분석 없음)은 즉시 삭제. 분석 텍스트 기록은 영구 보존되고 무거운 프레임 파일만 정리된다.
 
 ### PowerShell 업로드 예시
 
@@ -249,7 +251,7 @@ curl -X POST http://localhost:8000/api/clip/upload \
 
 - `system` = 3블록 고정 프롬프트 — ① '올레' 페르소나·답변 원칙, ② 라이엇 데이터 해석 가이드, ③ 인게임 화면 이해 가이드 (마지막 블록에 `cache_control` → system 전체 캐시)
 - few-shot 예시 2쌍(조건부 분기·노트 프레임 사용 스타일)
-- user = `[코치 노트]`/`[위키]` 출처 분리 RAG 결과 + 매치 컨텍스트 + **타임라인 정밀 데이터**(게임 시각 기준 10명 좌표·골드·레벨·CS + 전후 ±90초 이벤트) + **CV 자동 판독**(화질·게임 시각·미니맵 점) + 프레임 이미지(단일 프레임: 선택 장면 1쌍 / 멀티프레임: 최대 40쌍) + 질문
+- user = `[코치 노트]`/`[위키]` 출처 분리 RAG 결과 + 매치 컨텍스트 + **타임라인 정밀 데이터**(게임 시각 기준 10명 좌표·골드·레벨·CS + 전후 ±90초 이벤트) + **CV 자동 판독**(화질·게임 시각) + 프레임 이미지(단일 프레임: 선택 장면 1쌍 / 멀티프레임: 최대 40쌍) + 질문
 - **위키 정책**: 코칭 판단·프레임워크는 `[코치 노트]`만 근거로 사용, `[위키]`는 챔피언/스킬/아이템/용어 같은 사실 확인 보조로만 사용
 
 **전제 조건**
@@ -282,6 +284,8 @@ curl -X POST http://localhost:8000/api/clip/upload \
 - `frame_number` (선택, ≥1): 사용자가 고른 단일 프레임 번호. 주면 그 1장만(전체 화면 + 미니맵 확대) 보는 **단일 프레임 모드**로 동작. 생략하면 클립 전체 프레임을 보는 멀티프레임 모드(기능 보존)
 - `game_time` (선택, `"MM:SS"`): 클립 장면의 게임 시각. 주면 그 값으로 Riot 타임라인을 정렬해 정밀 데이터를 주입. 생략하면 CV가 프레임 타이머를 OCR해 자동 판독
 - `model` (선택, 기본 `claude-sonnet-4-6`)
+
+**스트리밍**: `POST /api/analyze/stream`은 같은 요청 본문을 받아 답변을 토큰 단위 SSE로 흘려보낸다. 각 줄은 `data: {json}` 형식이고 `type`이 `delta`(토큰)·`done`(완료, `analysis_id`·`metadata` 포함)·`error`다. 준비 단계 오류는 일반 HTTP 에러로, 스트리밍 중 오류는 `error` 이벤트로 온다. 프론트엔드는 이 엔드포인트를 사용한다. 기존 `POST /api/analyze`(비스트리밍)도 그대로 유지된다.
 
 ### 응답
 
@@ -360,7 +364,7 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 [Analyze] clip=8b3a8e21 mode=frame#7 t=8:32 timeline=Y frames=1 minimap=1 notes=3 examples=0 id=12 model=claude-sonnet-4-6 cost=$0.0488
 ```
 
-## 분석 히스토리 · 평가 · 피드백 학습
+## 분석 히스토리 · 평가 · 피드백 학습 · 메타 코칭
 
 모든 `/api/analyze` 결과는 SQLite(`db/knowledge.db`의 `analyses` 테이블)에
 영구 저장됩니다. 분석마다 **'장면·미니맵 판독'**과 **'코칭'** 두 축을 각각
@@ -379,6 +383,8 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 | `GET /api/analyses/{id}` | 분석 1건 상세 (코치 노트·주입 예시 포함) |
 | `POST /api/analyses/{id}/rating` | 평가 등록/수정 |
 | `DELETE /api/analyses/{id}` | 분석 기록 삭제 |
+| `GET /api/meta/stats` | 분석 평가 분포 통계 |
+| `POST /api/meta/report` | 누적 약점 메타 코칭 리포트 생성 (Claude 1회 호출) |
 
 평가 요청 본문 — `reading`/`coaching` 각각 `"up"` / `"down"` / `null`(미평가):
 
@@ -393,6 +399,13 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 
 분석 결과 화면과 페이지 하단 "분석 히스토리" 패널에서 평가할 수 있습니다.
 히스토리 항목을 펼치면 분석 전문 확인·평가·삭제가 가능합니다.
+
+### 메타 코칭
+
+쌓인 분석을 가로질러 반복되는 약점을 짚어주는 메타 코칭입니다. `GET /api/meta/stats`는
+판독·코칭 평가 분포를, `POST /api/meta/report`는 최근 분석(👎 제외)을 모아 Claude가
+정리한 누적 약점 리포트를 돌려줍니다. "분석 히스토리" 패널 상단에서 통계와
+'누적 코칭 리포트 생성' 버튼으로 쓸 수 있습니다.
 
 ## 의존 도구
 

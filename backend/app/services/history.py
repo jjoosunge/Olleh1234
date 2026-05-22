@@ -199,6 +199,23 @@ def delete_analysis(analysis_id: int) -> bool:
         conn.close()
 
 
+def clip_has_exemplary(clip_id: str) -> bool:
+    """해당 클립의 분석 중 두 축 모두 👍인 것이 하나라도 있으면 True."""
+    if not clip_id:
+        return False
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT count(*) AS c FROM analyses "
+            "WHERE clip_id = ? AND rating_reading = 'up' "
+            "AND rating_coaching = 'up'",
+            (clip_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row["c"] > 0
+
+
 def _add_to_vec(analysis_id: int, question: str) -> None:
     """우수 분석의 질문을 임베딩해 학습 풀에 넣는다. 실패해도 조용히 넘어간다."""
     try:

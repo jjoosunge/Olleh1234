@@ -652,27 +652,12 @@ def _format_cv(
         )
 
     mq = cv.get("minimap_quality")
-    dots = cv.get("minimap_dots") or []
     if mq == "low":
         lines.append(
             "미니맵 화질: 낮음 — 미니맵 세부는 '정보를 얻기 힘들다'로 처리하라."
         )
     elif mq == "ok":
-        allies = sum(1 for d in dots if d.get("side") == "ally")
-        enemies = sum(1 for d in dots if d.get("side") == "enemy")
-        lines.append(
-            f"미니맵 점 검출(색 기반 근사): 아군 {allies} / 적 {enemies}. "
-            "좌표는 미니맵 좌상단 0% ~ 우하단 100%."
-        )
-        for d in dots:
-            side = "적" if d.get("side") == "enemy" else "아군"
-            lines.append(
-                f"  - {side} ({d.get('x', 0) * 100:.0f}%, "
-                f"{d.get('y', 0) * 100:.0f}%)"
-            )
-        lines.append(
-            "(색 기반 근사라 누락·오검출 가능. 미니맵 이미지와 교차 확인하라.)"
-        )
+        lines.append("미니맵 화질: 양호")
     return "\n".join(lines)
 
 

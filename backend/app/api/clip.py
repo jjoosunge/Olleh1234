@@ -14,6 +14,7 @@ class FpsIntervalChoice(IntEnum):
     THREE_SEC = 3
 
 from app.services import cv_processor
+from app.services.cleanup import sweep_old_clips
 from app.services.clip_processor import extract_frames
 
 router = APIRouter(prefix="/api/clip", tags=["clip"])
@@ -113,6 +114,12 @@ async def upload_clip(
                 original_path.unlink()
             except OSError:
                 pass
+
+        # 업로드마다 오래된 클립 자동 정리
+        try:
+            sweep_old_clips()
+        except Exception as err:
+            print(f"[Clip] sweep skipped: {err}")
 
         return metadata
 

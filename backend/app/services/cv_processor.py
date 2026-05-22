@@ -126,7 +126,11 @@ def _detect_dots(
 def detect_minimap_dots(minimap_bgr: np.ndarray) -> list[dict]:
     """미니맵에서 아군/적 챔피언 점을 색으로 검출한다.
     좌표는 미니맵 좌상단 0,0 ~ 우하단 1,1 기준 상대값.
-    색 기반 근사이므로 정확도는 프레임에 따라 다르다."""
+
+    현재 analyze_frame에서 호출하지 않는다(미사용). 실측에서 타워·와드·
+    식물이 챔피언과 같은 빨강/파랑이라 오검출이 심해(챔피언 10명 대비
+    100+) 비활성화했다. 모양 기반(원형 아이콘 검출 + 타워 제외)으로
+    재구축할 때 다시 쓰기 위해 보존."""
     h, w = minimap_bgr.shape[:2]
     if h == 0 or w == 0:
         return []
@@ -172,6 +176,8 @@ def analyze_frame(
             out["minimap_quality"] = (
                 "ok" if mm_blur >= BLUR_THRESHOLD else "low"
             )
-            if out["minimap_quality"] == "ok":
-                out["minimap_dots"] = detect_minimap_dots(mm)
+            # 미니맵 점 색 검출은 비활성화: 타워·와드·식물이 챔피언과 같은
+            # 빨강/파랑이라 오검출이 심함(실측 챔피언 10명 대비 100+).
+            # 챔피언 위치는 타임라인이 정답값으로 제공한다. detect_minimap_dots는
+            # 모양 기반 재구축 전까지 미사용으로 보존(minimap_dots는 빈 리스트).
     return out

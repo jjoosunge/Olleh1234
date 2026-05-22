@@ -30,6 +30,17 @@ app.include_router(analyze_router.router)
 app.include_router(history_router.router)
 
 
+# 서버 기동 시 오래된 클립 1회 자동 정리
+try:
+    from app.services.cleanup import sweep_old_clips
+
+    _swept = sweep_old_clips()
+    if _swept:
+        print(f"[Startup] 오래된 클립 {len(_swept)}개 정리")
+except Exception as err:
+    print(f"[Startup] clip sweep skipped: {err}")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

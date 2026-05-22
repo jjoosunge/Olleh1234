@@ -20,6 +20,7 @@ from app.services.analyzer import (
     _select_frame_indices,
     _summarize_match,
 )
+from app.services.cleanup import sweep_old_clips
 from app.services.cv_processor import parse_game_time
 from app.services.history import _is_exemplary
 from app.services.riot_api import RiotAPIClient
@@ -433,6 +434,34 @@ class RegionTest(unittest.TestCase):
         self.assertEqual(_region(0.8, 0.2), "봇 쪽")
         self.assertEqual(_region(0.2, 0.8), "탑 쪽")
         self.assertEqual(_region(0.5, 0.5), "미드 쪽")
+
+
+class ClipSweepTest(unittest.TestCase):
+    """오래된 클립 자동 정리 — 수정 시각 기준, UUID 폴더만 대상."""
+
+    def test_removes_old_keeps_new(self):
+        import os
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old = base / "11111111-1111-1111-1111-111111111111"
+            new = base / "22222222-2222-2222-2222-222222222222"
+            old.mkdir()
+            new.mkdir()
+            old_ts = time.time() - 10 * 86400  # 10일 전
+            os.utime(old, (old_ts, old_ts))
+            removed = sweep_old_clips(max_age_days=7, clips_dir=base)
+            self.assertEqual(removed, [old.name])
+            self.assertFalse(old.exists())
+            self.assertTrue(new.exists())
+
+    def test_ignores_non_uuid_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "not-a-uuid").mkdir()
+            removed = sweep_old_clips(max_age_days=0, clips_dir=base)
+            self.assertEqual(removed, [])
 
 
 if __name__ == "__main__":

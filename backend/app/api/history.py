@@ -3,7 +3,9 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.services.cleanup import delete_clip_files
 from app.services.history import (
+    clip_has_exemplary,
     delete_analysis,
     get_analysis,
     list_analyses,
@@ -40,6 +42,15 @@ def post_rating(analysis_id: int, req: RatingRequest) -> dict:
     rec = rate_analysis(analysis_id, req.reading, req.coaching)
     if rec is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
+    # 👎를 받았고 그 클립에 우수 분석이 하나도 없으면 클립 파일을 즉시 정리.
+    # 분석 텍스트 기록은 그대로 보존된다.
+    downvoted = "down" in (
+        rec.get("rating_reading"),
+        rec.get("rating_coaching"),
+    )
+    clip_id = rec.get("clip_id")
+    if downvoted and clip_id and not clip_has_exemplary(clip_id):
+        delete_clip_files(clip_id)
     return rec
 
 

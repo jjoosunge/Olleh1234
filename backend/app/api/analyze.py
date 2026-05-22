@@ -3,9 +3,15 @@ from typing import Optional
 
 import anthropic
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.services.analyzer import DEFAULT_MODEL, analyze_clip
+from app.services.analyzer import (
+    DEFAULT_MODEL,
+    analyze_clip,
+    prepare_analysis,
+    stream_analysis,
+)
 
 router = APIRouter(prefix="/api", tags=["analyze"])
 
@@ -62,3 +68,29 @@ def analyze(req: AnalyzeRequest) -> dict:
         )
     except RuntimeError as err:
         raise HTTPException(status_code=500, detail=str(err))
+
+
+@router.post("/analyze/stream")
+def analyze_stream(req: AnalyzeRequest) -> StreamingResponse:
+    """분석 결과를 토큰 단위 SSE로 스트리밍한다.
+    준비 단계 오류는 일반 HTTP 에러, 스트리밍 중 오류는 SSE error 이벤트."""
+    _validate_clip_id(req.clip_id)
+    try:
+        prep = prepare_analysis(
+            clip_id=req.clip_id,
+            user_question=req.user_question,
+            match_id=req.match_id,
+            puuid=req.puuid,
+            model=req.model,
+            frame_number=req.frame_number,
+            game_time=req.game_time,
+        )
+    except FileNotFoundError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except RuntimeError as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    return StreamingResponse(
+        stream_analysis(prep),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )

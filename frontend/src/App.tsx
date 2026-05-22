@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import {
-  analyze,
+  analyzeStream,
   deleteAnalysis,
   durationSeconds,
   frameUrl,
@@ -152,6 +152,7 @@ function App() {
   const [model, setModel] = useState<string>(MODELS[0])
   const [analyzing, setAnalyzing] = useState(false)
   const [result, setResult] = useState<AnalyzeResult | null>(null)
+  const [streamingText, setStreamingText] = useState('')
 
   const [error, setError] = useState<string | null>(null)
 
@@ -243,8 +244,9 @@ function App() {
     setError(null)
     setAnalyzing(true)
     setResult(null)
+    setStreamingText('')
     try {
-      const r = await analyze(
+      const r = await analyzeStream(
         clip.clip_id,
         question.trim(),
         selectedMatchId,
@@ -252,8 +254,10 @@ function App() {
         selectedFrame,
         gameTime.trim() || null,
         model,
+        (text) => setStreamingText((prev) => prev + text),
       )
       setResult(r)
+      setStreamingText('')
       loadHistory()
     } catch (e) {
       setError(errMsg(e))
@@ -636,6 +640,14 @@ function App() {
             )}
           </form>
 
+          {analyzing && streamingText && (
+            <div className="analysis">
+              <p className="answer">
+                {streamingText}
+                <span className="cursor">▌</span>
+              </p>
+            </div>
+          )}
           {result && (
             <div className="analysis">
               <p className="answer">{result.analysis}</p>

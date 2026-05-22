@@ -2,7 +2,7 @@ import base64
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 import anthropic
 
@@ -680,10 +680,12 @@ def _estimate_cost(usage: Any, model: str) -> float:
     return round(cost, 4)
 
 
-# 동기 함수다. 내부에서 Claude/OpenAI/Riot를 모두 블로킹 호출하므로,
-# FastAPI가 이 경로를 외부 스레드풀에서 실행하도록 호출부(api/analyze.py)도
-# 동기 def로 둔다. async def로 두면 분석 동안 이벤트 루프 전체가 멈춘다.
-def analyze_clip(
+def _sse(obj: dict) -> str:
+    """Server-Sent Events 한 줄로 직렬화."""
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+def prepare_analysis(
     clip_id: str,
     user_question: str,
     match_id: Optional[str] = None,
@@ -692,6 +694,9 @@ def analyze_clip(
     frame_number: Optional[int] = None,
     game_time: Optional[str] = None,
 ) -> dict:
+    """분석 요청을 조립한다 — 프레임·CV·타임라인·노트·우수예시를 준비해
+    Claude 호출용 system/messages를 만든다. analyze_clip(비스트리밍)과
+    stream_analysis(스트리밍)가 공유한다."""
     clip_dir = CLIPS_DIR / clip_id
     metadata_path = clip_dir / "metadata.json"
     if not metadata_path.exists():
@@ -710,7 +715,7 @@ def analyze_clip(
             clip_dir, frame_number
         )
         screen_guide = SCREEN_READING_GUIDE_SINGLE
-        # CV 전처리: 화질 판정 + 타이머 OCR + 미니맵 점 검출
+        # CV 전처리: 화질 판정 + 타이머 OCR
         fp, mp = _frame_paths(clip_dir, frame_number)
         override = (
             cv_processor.parse_game_time(game_time) if game_time else None
@@ -798,81 +803,108 @@ def analyze_clip(
         {"type": "text", "text": f"=== 질문 ===\n{user_question}"}
     )
 
-    client = _get_client()
-    response = client.messages.create(
-        model=model,
-        max_tokens=DEFAULT_MAX_TOKENS,
-        system=[
+    return {
+        "client": _get_client(),
+        "model": model,
+        "system": [
             {"type": "text", "text": SYSTEM_PROMPT},
             {"type": "text", "text": RIOT_DATA_GUIDE},
             {
                 "type": "text",
                 "text": screen_guide,
-                # 마지막 system 블록에 캐시 브레이크포인트 → system 전체가 캐시됨
+                # 마지막 system 블록에 캐시 브레이크포인트 → system 전체 캐시
                 "cache_control": {"type": "ephemeral"},
             },
         ],
-        messages=[
+        "messages": [
             *FEW_SHOT_EXAMPLES,
             {"role": "user", "content": user_content},
         ],
-    )
+        "ctx": {
+            "clip_id": clip_id,
+            "user_question": user_question,
+            "puuid": puuid,
+            "model": model,
+            "frame_number": frame_number,
+            "n_full": n_full,
+            "n_mini": n_mini,
+            "notes": notes,
+            "good_examples": good_examples,
+            "cv_facts": cv_facts,
+            "game_secs": game_secs,
+            "time_source": time_source,
+            "timeline_used": timeline_block is not None,
+            "match_id_used": match_id if match_summary else None,
+        },
+    }
 
-    analysis_text = next(
-        (block.text for block in response.content if block.type == "text"),
-        "",
-    )
 
-    cost = _estimate_cost(response.usage, model)
-
+def finalize_analysis(
+    usage: Any, stop_reason: Any, analysis_text: str, ctx: dict
+) -> dict:
+    """Claude 응답으로 메타데이터 산출 + 히스토리 저장 후 결과 dict 반환.
+    스트리밍/비스트리밍 양쪽이 공유한다."""
+    cost = _estimate_cost(usage, ctx["model"])
+    cv_facts = ctx["cv_facts"]
     metadata_out = {
-        "frames_analyzed": n_full,
-        "minimaps_analyzed": n_mini,
-        "frame_number": frame_number,
-        "notes_referenced": len(notes),
-        "good_examples_used": len(good_examples),
-        "match_id_used": match_id if match_summary else None,
-        "game_time": cv_processor.fmt_secs(game_secs),
-        "game_time_source": time_source,
+        "frames_analyzed": ctx["n_full"],
+        "minimaps_analyzed": ctx["n_mini"],
+        "frame_number": ctx["frame_number"],
+        "notes_referenced": len(ctx["notes"]),
+        "good_examples_used": len(ctx["good_examples"]),
+        "match_id_used": ctx["match_id_used"],
+        "game_time": cv_processor.fmt_secs(ctx["game_secs"]),
+        "game_time_source": ctx["time_source"],
         "frame_quality": cv_facts.get("frame_quality") if cv_facts else None,
         "minimap_quality": (
             cv_facts.get("minimap_quality") if cv_facts else None
         ),
-        "timeline_used": timeline_block is not None,
-        "model": model,
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
-        "cache_read_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
-        "cache_creation_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
+        "timeline_used": ctx["timeline_used"],
+        "model": ctx["model"],
+        "input_tokens": getattr(usage, "input_tokens", 0) or 0,
+        "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+        "cache_read_tokens": getattr(
+            usage, "cache_read_input_tokens", 0
+        )
+        or 0,
+        "cache_creation_tokens": getattr(
+            usage, "cache_creation_input_tokens", 0
+        )
+        or 0,
         "estimated_cost_usd": cost,
-        "stop_reason": response.stop_reason,
+        "stop_reason": stop_reason,
     }
 
-    # 분석 결과를 히스토리에 저장. 저장 실패가 분석 응답을 막지 않도록 격리.
+    # 분석 결과를 히스토리에 저장. 저장 실패가 응답을 막지 않도록 격리.
     analysis_id = None
     try:
         analysis_id = save_analysis(
-            clip_id=clip_id,
-            frame_number=frame_number,
-            match_id=match_id if match_summary else None,
-            puuid=puuid,
-            model=model,
-            user_question=user_question,
+            clip_id=ctx["clip_id"],
+            frame_number=ctx["frame_number"],
+            match_id=ctx["match_id_used"],
+            puuid=ctx["puuid"],
+            model=ctx["model"],
+            user_question=ctx["user_question"],
             analysis_text=analysis_text,
             metadata=metadata_out,
-            notes=notes,
-            examples_used=[ex["id"] for ex in good_examples],
+            notes=ctx["notes"],
+            examples_used=[ex["id"] for ex in ctx["good_examples"]],
         )
     except Exception as err:
         print(f"[Analyze] save_analysis failed: {err}")
 
-    mode = f"frame#{frame_number}" if frame_number is not None else "multi"
-    gt = cv_processor.fmt_secs(game_secs) or "?"
+    mode = (
+        f"frame#{ctx['frame_number']}"
+        if ctx["frame_number"] is not None
+        else "multi"
+    )
+    gt = cv_processor.fmt_secs(ctx["game_secs"]) or "?"
     print(
-        f"[Analyze] clip={clip_id[:8]} mode={mode} t={gt} "
-        f"timeline={'Y' if timeline_block else 'N'} frames={n_full} "
-        f"minimap={n_mini} notes={len(notes)} examples={len(good_examples)} "
-        f"id={analysis_id} model={model} cost=${cost}"
+        f"[Analyze] clip={ctx['clip_id'][:8]} mode={mode} t={gt} "
+        f"timeline={'Y' if ctx['timeline_used'] else 'N'} "
+        f"frames={ctx['n_full']} minimap={ctx['n_mini']} "
+        f"notes={len(ctx['notes'])} examples={len(ctx['good_examples'])} "
+        f"id={analysis_id} model={ctx['model']} cost=${cost}"
     )
 
     return {
@@ -880,6 +912,71 @@ def analyze_clip(
         "analysis_id": analysis_id,
         "metadata": metadata_out,
     }
+
+
+# 동기 함수다. 내부에서 Claude/OpenAI/Riot를 모두 블로킹 호출하므로,
+# FastAPI가 이 경로를 외부 스레드풀에서 실행하도록 호출부(api/analyze.py)도
+# 동기 def로 둔다. async def로 두면 분석 동안 이벤트 루프 전체가 멈춘다.
+def analyze_clip(
+    clip_id: str,
+    user_question: str,
+    match_id: Optional[str] = None,
+    puuid: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
+    frame_number: Optional[int] = None,
+    game_time: Optional[str] = None,
+) -> dict:
+    """비스트리밍 분석 — 전체 응답을 한 번에 받는다."""
+    prep = prepare_analysis(
+        clip_id, user_question, match_id, puuid, model,
+        frame_number, game_time,
+    )
+    response = prep["client"].messages.create(
+        model=prep["model"],
+        max_tokens=DEFAULT_MAX_TOKENS,
+        system=prep["system"],
+        messages=prep["messages"],
+    )
+    analysis_text = next(
+        (block.text for block in response.content if block.type == "text"),
+        "",
+    )
+    return finalize_analysis(
+        response.usage, response.stop_reason, analysis_text, prep["ctx"]
+    )
+
+
+def stream_analysis(prep: dict) -> Iterator[str]:
+    """prepare_analysis 결과를 받아 토큰을 SSE로 흘려보낸다.
+    토큰마다 {"type":"delta"}, 끝나면 finalize 후 {"type":"done"},
+    스트리밍 중 실패 시 {"type":"error"} 이벤트를 보낸다."""
+    chunks: list[str] = []
+    try:
+        with prep["client"].messages.stream(
+            model=prep["model"],
+            max_tokens=DEFAULT_MAX_TOKENS,
+            system=prep["system"],
+            messages=prep["messages"],
+        ) as stream:
+            for text in stream.text_stream:
+                chunks.append(text)
+                yield _sse({"type": "delta", "text": text})
+            final = stream.get_final_message()
+    except Exception as err:
+        print(f"[Analyze] stream failed: {err}")
+        yield _sse({"type": "error", "detail": str(err)})
+        return
+
+    result = finalize_analysis(
+        final.usage, final.stop_reason, "".join(chunks), prep["ctx"]
+    )
+    yield _sse(
+        {
+            "type": "done",
+            "analysis_id": result["analysis_id"],
+            "metadata": result["metadata"],
+        }
+    )
 
 
 META_REPORT_SYSTEM = """당신은 '올레'입니다. 한 플레이어의 여러 코칭 기록을 모아

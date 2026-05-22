@@ -216,6 +216,76 @@ export async function analyze(
   return unwrap<AnalyzeResult>(res)
 }
 
+// 분석을 SSE로 스트리밍 — 토큰마다 onDelta 호출, 완료 시 AnalyzeResult 반환.
+export async function analyzeStream(
+  clipId: string,
+  userQuestion: string,
+  matchId: string | null,
+  puuid: string | null,
+  frameNumber: number,
+  gameTime: string | null,
+  model: string | undefined,
+  onDelta: (text: string) => void,
+): Promise<AnalyzeResult> {
+  const res = await fetch(`${BACKEND_URL}/api/analyze/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clip_id: clipId,
+      user_question: userQuestion,
+      match_id: matchId,
+      puuid,
+      frame_number: frameNumber,
+      game_time: gameTime,
+      ...(model ? { model } : {}),
+    }),
+  })
+  if (!res.ok || !res.body) {
+    // 준비 단계 오류는 일반 JSON 에러로 온다
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { detail?: unknown }
+      if (typeof body.detail === 'string' && body.detail) detail = body.detail
+    } catch {
+      // JSON 본문이 아니면 기본 메시지 유지
+    }
+    throw new Error(detail)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let analysisText = ''
+  let result: AnalyzeResult | null = null
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split('\n\n')
+    buffer = events.pop() ?? ''
+    for (const evt of events) {
+      const dataLine = evt.split('\n').find((l) => l.startsWith('data:'))
+      if (!dataLine) continue
+      const payload = JSON.parse(dataLine.slice(5).trim())
+      if (payload.type === 'delta') {
+        analysisText += payload.text
+        onDelta(payload.text as string)
+      } else if (payload.type === 'done') {
+        result = {
+          analysis: analysisText,
+          analysis_id: payload.analysis_id,
+          metadata: payload.metadata,
+        }
+      } else if (payload.type === 'error') {
+        throw new Error(payload.detail || '분석 스트리밍 오류')
+      }
+    }
+  }
+  if (!result) throw new Error('분석이 완료되지 않았습니다.')
+  return result
+}
+
 // 동시 요청 수를 제한해 매치 상세를 일괄 조회 (Riot 레이트리밋 보호).
 export async function mapLimit<T, R>(
   items: T[],

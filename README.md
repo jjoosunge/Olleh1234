@@ -1,17 +1,17 @@
 # LoL Coach MVP
 
 리그 오브 레전드 매치를 분석해 코칭을 제공하는 AI 서비스의 MVP입니다.
-FastAPI 백엔드 + React 프론트엔드 모노레포 구조이며, Riot 매치 데이터 · 클립 프레임(FFmpeg) · 코칭 노트(RAG) · 위키 지식을 결합해 Claude로 코칭 답변을 생성합니다.
+FastAPI 백엔드 + React 프론트엔드 모노레포 구조이며, Riot 매치 데이터·타임라인 · 클립 프레임(FFmpeg) · CV 전처리(타이머 OCR·화질 판정) · 코칭 노트(RAG) · 위키 지식을 결합해 Claude로 코칭 답변을 생성합니다.
 
-> **기본값**: 모델 `claude-sonnet-4-6`, 프레임 간격 3초, 단일 프레임 분석(사용자가 고른 장면 1장), prompt caching 적용(시스템 프롬프트 3블록 + few-shot 캐시)
+> **기본값**: 모델 `claude-sonnet-4-6`, 프레임 간격 3초, 단일 프레임 분석(사용자가 고른 장면 1장), CV 전처리 + Riot 타임라인 정밀 데이터 주입, prompt caching 적용
 
 ## 사용자 워크플로우
 
 1. **소환사 검색** — Riot ID(`닉네임#태그`) 입력
 2. **솔로랭크 최근 20게임** — `queue=420` 필터로 솔로랭크만 노출
 3. **경기 선택 → 상세** — 양 팀 참가자·결과 표시
-4. **클립 업로드 & 장면 선택** — 1~3초당 1프레임 추출(FFmpeg) 후, 추출된 프레임 중 분석할 장면 1장을 선택
-5. **질문 → 코칭 답변** — 고정 프롬프트 2종(라이엇 데이터 해석 + 인게임 화면 이해) + 선택 장면(전체 화면 + 미니맵 확대) + 매치 데이터 + 코치 노트/위키(RAG) + 질문을 Claude에 전달
+4. **클립 업로드 & 장면 선택** — 1~3초당 1프레임 추출(FFmpeg) 후, 분석할 장면 1장을 선택. 선택 시 CV가 게임 시각(타이머 OCR)·화질을 자동 감지하며 게임 시각은 수정 가능
+5. **질문 → 코칭 답변** — 고정 프롬프트 + 선택 장면(전체 화면 + 미니맵 확대) + CV 자동 판독 + 타임라인 정밀 데이터(그 시점 10명 좌표·골드·레벨) + 매치 데이터 + 코치 노트/위키(RAG) + 질문을 Claude에 전달
 
 프론트엔드(`http://localhost:5173`)에서 위 5단계가 하나의 화면 흐름으로 구현돼 있습니다.
 
@@ -201,6 +201,7 @@ ffprobe -version
 | `POST /api/clip/upload` | multipart 영상 업로드 → 프레임 추출 |
 | `GET /api/clip/{clip_id}` | metadata.json 반환 |
 | `GET /api/clip/{clip_id}/frames/{frame_number}` | 단일 프레임 이미지 (1부터) |
+| `GET /api/clip/{clip_id}/frames/{frame_number}/cv` | 프레임 CV 전처리 (화질·게임 시각·미니맵 점) |
 | `DELETE /api/clip/{clip_id}` | 클립 폴더 전체 삭제 |
 
 - 지원 확장자: `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`
@@ -238,17 +239,17 @@ curl -X POST http://localhost:8000/api/clip/upload \
   -F "fps_interval=3"
 ```
 
-`/docs` (Swagger UI)에서 `clip` 태그 아래 4개 엔드포인트를 폼 UI로 직접 호출할 수도 있습니다.
+`/docs` (Swagger UI)에서 `clip` 태그 아래 엔드포인트를 폼 UI로 직접 호출할 수도 있습니다.
 
 ## AI 분석 테스트
 
-업로드된 클립 프레임 + RAG(코치 노트/위키) + (선택)매치 데이터를 Claude에 보내 코칭 답변을 받습니다.
+업로드된 클립 프레임 + CV 자동 판독 + RAG(코치 노트/위키) + (선택)매치 데이터·타임라인을 Claude에 보내 코칭 답변을 받습니다.
 
 **프롬프트 구성** (`app/services/analyzer.py`):
 
 - `system` = 3블록 고정 프롬프트 — ① '올레' 페르소나·답변 원칙, ② 라이엇 데이터 해석 가이드, ③ 인게임 화면 이해 가이드 (마지막 블록에 `cache_control` → system 전체 캐시)
 - few-shot 예시 2쌍(조건부 분기·노트 프레임 사용 스타일)
-- user = `[코치 노트]`/`[위키]` 출처 분리 RAG 결과 + 매치 컨텍스트(포지션별 KDA·CS·골드·시야·오브젝트) + 프레임 이미지(**단일 프레임 모드**: 사용자가 고른 장면 1쌍 = 전체 화면 + 미니맵 확대 / 멀티프레임 모드: 최대 40쌍) + 질문
+- user = `[코치 노트]`/`[위키]` 출처 분리 RAG 결과 + 매치 컨텍스트 + **타임라인 정밀 데이터**(게임 시각 기준 10명 좌표·골드·레벨·CS + 전후 ±90초 이벤트) + **CV 자동 판독**(화질·게임 시각·미니맵 점) + 프레임 이미지(단일 프레임: 선택 장면 1쌍 / 멀티프레임: 최대 40쌍) + 질문
 - **위키 정책**: 코칭 판단·프레임워크는 `[코치 노트]`만 근거로 사용, `[위키]`는 챔피언/스킬/아이템/용어 같은 사실 확인 보조로만 사용
 
 **전제 조건**
@@ -256,7 +257,7 @@ curl -X POST http://localhost:8000/api/clip/upload \
 - `backend/.env`의 `ANTHROPIC_API_KEY` 설정
 - 클립 한 개 이상 업로드 완료 (`/api/clip/upload`)
 - 코칭 노트 인덱싱 완료 (`python -m app.scripts.reindex`)
-- 매치 컨텍스트를 쓸 거면 `RIOT_API_KEY`도 설정
+- 매치 컨텍스트·타임라인 정밀 데이터를 쓸 거면 `RIOT_API_KEY`도 설정 (타임라인은 게임 시각이 있어야 정렬됨 — CV 자동 OCR 또는 직접 입력)
 
 ### 요청
 
@@ -269,6 +270,7 @@ curl -X POST http://localhost:8000/api/clip/upload \
   "match_id": "KR_8214989964",
   "puuid": "사용자-본인-puuid",
   "frame_number": 7,
+  "game_time": "8:32",
   "model": "claude-sonnet-4-6"
 }
 ```
@@ -278,6 +280,7 @@ curl -X POST http://localhost:8000/api/clip/upload \
 - `match_id` (선택): 있으면 Riot 매치 상세를 컨텍스트로 첨부
 - `puuid` (선택): 사용자 본인의 puuid. `match_id`와 함께 주면 매치에서 본인 챔피언을 식별해 "이 챔피언 POV로 분석" 지시가 주입됨(챔피언 오인 방지)
 - `frame_number` (선택, ≥1): 사용자가 고른 단일 프레임 번호. 주면 그 1장만(전체 화면 + 미니맵 확대) 보는 **단일 프레임 모드**로 동작. 생략하면 클립 전체 프레임을 보는 멀티프레임 모드(기능 보존)
+- `game_time` (선택, `"MM:SS"`): 클립 장면의 게임 시각. 주면 그 값으로 Riot 타임라인을 정렬해 정밀 데이터를 주입. 생략하면 CV가 프레임 타이머를 OCR해 자동 판독
 - `model` (선택, 기본 `claude-sonnet-4-6`)
 
 ### 응답
@@ -285,12 +288,19 @@ curl -X POST http://localhost:8000/api/clip/upload \
 ```json
 {
   "analysis": "결론: ...\n근거: ...\n교정: ...",
+  "analysis_id": 12,
   "metadata": {
     "frames_analyzed": 1,
     "minimaps_analyzed": 1,
     "frame_number": 7,
     "notes_referenced": 3,
+    "good_examples_used": 0,
     "match_id_used": "KR_8214989964",
+    "game_time": "8:32",
+    "game_time_source": "frame",
+    "frame_quality": "ok",
+    "minimap_quality": "ok",
+    "timeline_used": true,
     "model": "claude-sonnet-4-6",
     "input_tokens": 12480,
     "output_tokens": 760,
@@ -312,6 +322,7 @@ $body = @{
     user_question = "이 장면에서 내 포지셔닝·갱 호응 판단 봐줘."
     match_id      = "KR_8214989964"
     frame_number  = 7
+    game_time     = "8:32"
 } | ConvertTo-Json
 
 Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
@@ -346,7 +357,7 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 각 분석 호출마다 백엔드 로그에 한 줄 요약이 찍힙니다:
 
 ```
-[Analyze] clip=8b3a8e21 mode=frame#7 frames=1 minimap=1 notes=3 model=claude-sonnet-4-6 cost=$0.0488
+[Analyze] clip=8b3a8e21 mode=frame#7 t=8:32 timeline=Y frames=1 minimap=1 notes=3 examples=0 id=12 model=claude-sonnet-4-6 cost=$0.0488
 ```
 
 ## 의존 도구

@@ -1081,3 +1081,70 @@ def generate_meta_report(
         f"cost=${_estimate_cost(response.usage, model)}"
     )
     return {"report": text, "based_on": len(analyses)}
+
+
+FAILURE_REPORT_SYSTEM = """당신은 AI 코칭 시스템의 품질 분석가입니다. 사용자가
+낮게 평가(👎)한 분석들을 모아, 이 AI가 '반복적으로' 무엇을 잘못하는지
+패턴을 찾습니다.
+
+- 개별 분석 비평이 아니라, 여러 사례에 걸쳐 되풀이되는 실패 패턴만 뽑아라.
+- 평가축을 구분하라: '판독 👎'(장면·맵을 잘못 읽음)와 '코칭 👎'(코칭 내용이
+  부실함)는 원인이 다르다.
+- 실패 패턴마다 (1) 무엇을 반복해서 틀리는지 (2) 추정 원인 — 프롬프트 지침
+  부족 / 입력 데이터 부족 / 도메인 지식 부족 중 무엇인지 (3) 구체적 개선 방향.
+- 표본이 적으면 단정하지 말고 그렇다고 밝혀라.
+- 짧고 실행 가능하게. 한국어."""
+
+
+def generate_failure_report(
+    analyses: list[dict], model: str = DEFAULT_MODEL
+) -> dict:
+    """👎를 받은 분석들을 모아 AI의 반복 실패 패턴을 정리한다."""
+    if not analyses:
+        return {
+            "report": (
+                "👎 평가를 받은 분석이 아직 없습니다. "
+                "분석을 평가하면 실패 패턴이 쌓입니다."
+            ),
+            "based_on": 0,
+        }
+
+    lines: list[str] = []
+    for i, a in enumerate(analyses, 1):
+        axes = []
+        if a.get("rating_reading") == "down":
+            axes.append("판독 👎")
+        if a.get("rating_coaching") == "down":
+            axes.append("코칭 👎")
+        lines.append(
+            f"[사례 {i}] ({' · '.join(axes)}) "
+            f"질문: {a.get('user_question', '')}"
+        )
+        lines.append(f"분석: {a.get('analysis_text', '')}")
+        lines.append("")
+
+    client = _get_client()
+    response = client.messages.create(
+        model=model,
+        max_tokens=1500,
+        system=[{"type": "text", "text": FAILURE_REPORT_SYSTEM}],
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "다음은 사용자가 👎로 평가한 분석들이다. 이 AI가 "
+                    "공통적으로 무엇을 틀리는지 실패 패턴으로 정리하라.\n\n"
+                    + "\n".join(lines)
+                ),
+            }
+        ],
+    )
+    text = next(
+        (block.text for block in response.content if block.type == "text"),
+        "",
+    )
+    print(
+        f"[Meta] failure-report based_on={len(analyses)} model={model} "
+        f"cost=${_estimate_cost(response.usage, model)}"
+    )
+    return {"report": text, "based_on": len(analyses)}

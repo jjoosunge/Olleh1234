@@ -261,6 +261,30 @@ def recent_analyses_for_report(limit: int = 15) -> list[dict]:
     ]
 
 
+def recent_failed_analyses(limit: int = 20) -> list[dict]:
+    """판독 또는 코칭에서 👎를 받은 최근 분석 — 실패 패턴 분석용."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT user_question, analysis_text, rating_reading, "
+            "rating_coaching FROM analyses "
+            "WHERE rating_reading = 'down' OR rating_coaching = 'down' "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "user_question": r["user_question"],
+            "analysis_text": r["analysis_text"],
+            "rating_reading": r["rating_reading"],
+            "rating_coaching": r["rating_coaching"],
+        }
+        for r in rows
+    ]
+
+
 def _add_to_vec(analysis_id: int, question: str) -> None:
     """우수 분석의 질문을 임베딩해 학습 풀에 넣는다. 실패해도 조용히 넘어간다."""
     try:

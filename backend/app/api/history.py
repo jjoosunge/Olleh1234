@@ -3,16 +3,15 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services.analyzer import generate_meta_report
-from app.services.cleanup import delete_clip_files
+from app.services.analyzer import generate_failure_report, generate_meta_report
 from app.services.history import (
-    clip_has_exemplary,
     delete_analysis,
     get_analysis,
     list_analyses,
     rate_analysis,
     rating_stats,
     recent_analyses_for_report,
+    recent_failed_analyses,
 )
 
 router = APIRouter(prefix="/api", tags=["history"])
@@ -42,18 +41,11 @@ class RatingRequest(BaseModel):
 
 @router.post("/analyses/{analysis_id}/rating")
 def post_rating(analysis_id: int, req: RatingRequest) -> dict:
+    # 👎를 받아도 클립을 즉시 삭제하지 않는다 — 잘못된 분석을 다시 검토할 수
+    # 있도록 두고, 클립 파일은 7일 시간 정리(sweep_old_clips)에만 맡긴다.
     rec = rate_analysis(analysis_id, req.reading, req.coaching)
     if rec is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    # 👎를 받았고 그 클립에 우수 분석이 하나도 없으면 클립 파일을 즉시 정리.
-    # 분석 텍스트 기록은 그대로 보존된다.
-    downvoted = "down" in (
-        rec.get("rating_reading"),
-        rec.get("rating_coaching"),
-    )
-    clip_id = rec.get("clip_id")
-    if downvoted and clip_id and not clip_has_exemplary(clip_id):
-        delete_clip_files(clip_id)
     return rec
 
 
@@ -76,5 +68,15 @@ def post_meta_report() -> dict:
     analyses = recent_analyses_for_report(15)
     try:
         return generate_meta_report(analyses)
+    except RuntimeError as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@router.post("/meta/failure-report")
+def post_failure_report() -> dict:
+    """👎 받은 분석을 모아 AI의 반복 실패 패턴을 정리한다(Claude 1회 호출)."""
+    analyses = recent_failed_analyses(20)
+    try:
+        return generate_failure_report(analyses)
     except RuntimeError as err:
         raise HTTPException(status_code=500, detail=str(err))

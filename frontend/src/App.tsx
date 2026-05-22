@@ -6,6 +6,7 @@ import {
   deleteAnalysis,
   durationSeconds,
   frameUrl,
+  generateFailureReport,
   generateMetaReport,
   getFrameCv,
   getMatch,
@@ -175,6 +176,8 @@ function App() {
   const [metaStats, setMetaStats] = useState<RatingStats | null>(null)
   const [metaReport, setMetaReport] = useState<MetaReport | null>(null)
   const [metaLoading, setMetaLoading] = useState(false)
+  const [failureReport, setFailureReport] = useState<MetaReport | null>(null)
+  const [failureLoading, setFailureLoading] = useState(false)
 
   const selectedMatch = matches.find((m) => m.matchId === selectedMatchId) ?? null
   const resultRecord =
@@ -332,6 +335,17 @@ function App() {
       setError(errMsg(e))
     } finally {
       setMetaLoading(false)
+    }
+  }
+
+  async function handleFailureReport() {
+    setFailureLoading(true)
+    try {
+      setFailureReport(await generateFailureReport())
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setFailureLoading(false)
     }
   }
 
@@ -755,20 +769,38 @@ function App() {
               {metaStats.reading.up}/👎{metaStats.reading.down} · 코칭 👍
               {metaStats.coaching.up}/👎{metaStats.coaching.down}
             </p>
-            <button
-              type="button"
-              className="small-btn"
-              onClick={handleGenerateReport}
-              disabled={metaLoading}
-            >
-              {metaLoading ? '리포트 생성 중…' : '누적 코칭 리포트 생성'}
-            </button>
+            <div className="row wrap">
+              <button
+                type="button"
+                className="small-btn"
+                onClick={handleGenerateReport}
+                disabled={metaLoading}
+              >
+                {metaLoading ? '생성 중…' : '누적 코칭 리포트 (내 약점)'}
+              </button>
+              <button
+                type="button"
+                className="small-btn"
+                onClick={handleFailureReport}
+                disabled={failureLoading}
+              >
+                {failureLoading ? '생성 중…' : '실패 패턴 리포트 (AI 오류)'}
+              </button>
+            </div>
             {metaReport && (
               <div className="meta-report">
-                <p className="answer">{metaReport.report}</p>
                 <p className="muted small">
-                  최근 분석 {metaReport.based_on}건 기준
+                  누적 코칭 리포트 — 최근 분석 {metaReport.based_on}건
                 </p>
+                <p className="answer">{metaReport.report}</p>
+              </div>
+            )}
+            {failureReport && (
+              <div className="meta-report">
+                <p className="muted small">
+                  실패 패턴 리포트 — 👎 분석 {failureReport.based_on}건
+                </p>
+                <p className="answer">{failureReport.report}</p>
               </div>
             )}
           </div>

@@ -210,7 +210,7 @@ ffprobe -version
 - `fps_interval`: **1초 / 2초 / 3초 중 선택** (기본 3초). 짧은 클립일수록 작은 값, 매크로 분석엔 3초 추천.
 - 저장 위치: `backend/uploads/clips/{clip_id}/frames/frame_0001.jpg ...`
 - 기본은 원본 영상 파일 삭제(프레임만 보관). 원본 유지하려면 `keep_original=true`.
-- **자동 정리**: 7일 경과 클립은 업로드 시·서버 기동 시 삭제. 분석에서 👎를 받은 클립(우수 분석 없음)은 즉시 삭제. 분석 텍스트 기록은 영구 보존되고 무거운 프레임 파일만 정리된다.
+- **자동 정리**: 7일 경과 클립은 업로드 시·서버 기동 시 삭제(👎 받은 클립도 검토를 위해 즉시 삭제하지 않고 동일하게 7일 적용). 분석 텍스트 기록은 영구 보존되고 무거운 프레임 파일만 정리된다.
 
 ### PowerShell 업로드 예시
 
@@ -385,6 +385,7 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 | `DELETE /api/analyses/{id}` | 분석 기록 삭제 |
 | `GET /api/meta/stats` | 분석 평가 분포 통계 |
 | `POST /api/meta/report` | 누적 약점 메타 코칭 리포트 생성 (Claude 1회 호출) |
+| `POST /api/meta/failure-report` | 👎 분석을 모아 AI 실패 패턴 리포트 (Claude 1회 호출) |
 
 평가 요청 본문 — `reading`/`coaching` 각각 `"up"` / `"down"` / `null`(미평가):
 
@@ -402,10 +403,11 @@ Invoke-RestMethod -Uri http://localhost:8000/api/analyze `
 
 ### 메타 코칭
 
-쌓인 분석을 가로질러 반복되는 약점을 짚어주는 메타 코칭입니다. `GET /api/meta/stats`는
-판독·코칭 평가 분포를, `POST /api/meta/report`는 최근 분석(👎 제외)을 모아 Claude가
-정리한 누적 약점 리포트를 돌려줍니다. "분석 히스토리" 패널 상단에서 통계와
-'누적 코칭 리포트 생성' 버튼으로 쓸 수 있습니다.
+쌓인 분석을 가로질러 패턴을 뽑는 두 가지 리포트입니다. `POST /api/meta/report`는
+최근 분석(👎 제외)을 모아 **플레이어의 반복 약점**을, `POST /api/meta/failure-report`는
+👎를 받은 분석을 모아 **AI가 반복적으로 무엇을 틀리는지**(프롬프트·지식 개선용)를
+정리합니다. `GET /api/meta/stats`는 평가 분포 통계. "분석 히스토리" 패널 상단에서
+버튼으로 쓸 수 있습니다.
 
 ## 의존 도구
 

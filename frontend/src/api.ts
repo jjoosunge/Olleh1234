@@ -355,3 +355,11 @@ export async function generateMetaReport(): Promise<MetaReport> {
   })
   return unwrap<MetaReport>(res)
 }
+
+// 👎 받은 분석을 모아 AI 실패 패턴 리포트 생성 (Claude 1회 호출).
+export async function generateFailureReport(): Promise<MetaReport> {
+  const res = await fetch(`${BACKEND_URL}/api/meta/failure-report`, {
+    method: 'POST',
+  })
+  return unwrap<MetaReport>(res)
+}

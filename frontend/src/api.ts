@@ -56,6 +56,7 @@ export type AnalysisMetadata = {
   minimap_quality: string | null
   timeline_used: boolean
   model: string
+  tier: string | null
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -224,6 +225,7 @@ export async function analyzeStream(
   puuid: string | null,
   frameNumber: number,
   gameTime: string | null,
+  tier: string | null,
   model: string | undefined,
   onDelta: (text: string) => void,
 ): Promise<AnalyzeResult> {
@@ -237,6 +239,7 @@ export async function analyzeStream(
       puuid,
       frame_number: frameNumber,
       game_time: gameTime,
+      tier,
       ...(model ? { model } : {}),
     }),
   })

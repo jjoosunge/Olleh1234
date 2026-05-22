@@ -39,6 +39,17 @@ const MODELS = [
 
 const FPS_CHOICES = [1, 2, 3] as const
 
+const TIERS = [
+  '아이언',
+  '브론즈',
+  '실버',
+  '골드',
+  '플래티넘',
+  '에메랄드',
+  '다이아몬드',
+  '마스터+',
+] as const
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
@@ -150,6 +161,7 @@ function App() {
   // 5단계: 질문/분석
   const [question, setQuestion] = useState('')
   const [model, setModel] = useState<string>(MODELS[0])
+  const [tier, setTier] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [result, setResult] = useState<AnalyzeResult | null>(null)
   const [streamingText, setStreamingText] = useState('')
@@ -253,6 +265,7 @@ function App() {
         summoner?.puuid ?? null,
         selectedFrame,
         gameTime.trim() || null,
+        tier || null,
         model,
         (text) => setStreamingText((prev) => prev + text),
       )
@@ -356,6 +369,7 @@ function App() {
     setGameTime('')
     setFrameCv(null)
     setQuestion('')
+    setTier('')
     setResult(null)
     setError(null)
   }
@@ -642,6 +656,20 @@ function App() {
               onChange={(e) => setQuestion(e.target.value)}
             />
             <div className="row wrap">
+              <label className="inline">
+                티어
+                <select
+                  value={tier}
+                  onChange={(e) => setTier(e.target.value)}
+                >
+                  <option value="">선택 안 함</option>
+                  {TIERS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="inline">
                 모델
                 <select

@@ -149,6 +149,17 @@ SCREEN_READING_GUIDE_SINGLE = """=== 인게임 화면(한 장면)을 읽는 법 
 첨부된 이미지는 사용자가 클립에서 직접 고른 '한 시점'의 장면이다.
 먼저 `[선택 장면 · 전체 화면]`, 이어서 같은 시점의 `[선택 장면 · 미니맵 확대]`
 (우하단 미니맵만 고화질로 크롭·확대한 것)가 들어온다. 미니맵은 없을 수도 있다.
+
+**판독 절차 — 답하기 전에 반드시 이 순서로 장면을 읽어라:**
+1) 게임 시각 확정 — `=== CV 자동 판독 ===` 또는 화면 타이머.
+2) 로스터 — `=== 매치 컨텍스트 ===`에서 누가 어느 챔피언·포지션·팀인지, `=== 사용자 본인 ===`의 내 챔피언.
+3) 내 챔피언 상태 — 체력·마나·레벨·소환사 주문(점멸 등)·스킬 쿨다운.
+4) 적 위치 — 보이는 적과 안 보이는 적. 안 보이는 적은 '위치 불명 = 위협'으로 둔다.
+5) 맵 상황 — 아래 '맵 상황 5가지'로 읽는다.
+6) 구조화 데이터 대조 — `=== 타임라인 정밀 데이터 ===`로 1~5를 보정. 이미지와 충돌하면 구조화 데이터를 우선한다.
+7) 위 1~6을 정리한 다음에야 질문에 답한다 — 추측으로 빈칸을 메우지 마라.
+
+아래는 각 단계의 세부 규칙이다.
 - **이건 단 한 장면이다.** 직전·직후에 무슨 일이 있었는지 시퀀스로 단정하지 마라. 그 순간 화면에 실제로 보이는 정보만으로 판단하고, 보이지 않는 것은 "이 장면에서는 확인 안 됨"으로 둔다.
 - **챔피언 위치·정글 동선·핑·와드는 반드시 [미니맵 확대]로 판독하라.** 전체 화면의 작은 미니맵으로 위치를 추측하지 마라. 미니맵 확대본에서도 안 보이는 적은 '위치 불명'으로 처리하고 어디 있다고 단정하지 마라.
 - **미니맵 아이콘의 초상화로 챔피언을 맞히려 하지 마라.** 아이콘은 너무 작아 식별 불가. 미니맵에서 읽을 것은 (1) 점의 위치, (2) 테두리 색으로 아군/적 구분, (3) 뭉침/분산, (4) 흰 사각형(카메라 시야 박스) 위치뿐이다.
@@ -716,6 +727,7 @@ def prepare_analysis(
     model: str = DEFAULT_MODEL,
     frame_number: Optional[int] = None,
     game_time: Optional[str] = None,
+    tier: Optional[str] = None,
 ) -> dict:
     """분석 요청을 조립한다 — 프레임·CV·타임라인·노트·우수예시를 준비해
     Claude 호출용 system/messages를 만든다. analyze_clip(비스트리밍)과
@@ -821,6 +833,19 @@ def prepare_analysis(
                 ),
             }
         )
+    if tier:
+        user_content.append(
+            {
+                "type": "text",
+                "text": (
+                    "=== 사용자 실력대 ===\n"
+                    f"이 플레이어는 {tier} 구간이다. 코칭 눈높이를 그 수준에 "
+                    "맞춰라 — 그 티어에서 실제로 자주 나오는 실수와 그 티어가 "
+                    "당장 소화할 수 있는 개선점에 집중하고, 너무 고차원적이거나 "
+                    "너무 기초적인 조언으로 헛돌지 마라."
+                ),
+            }
+        )
     user_content.extend(frame_blocks)
     user_content.append(
         {"type": "text", "text": f"=== 질문 ===\n{user_question}"}
@@ -848,6 +873,7 @@ def prepare_analysis(
             "user_question": user_question,
             "puuid": puuid,
             "model": model,
+            "tier": tier,
             "frame_number": frame_number,
             "n_full": n_full,
             "n_mini": n_mini,
@@ -884,6 +910,7 @@ def finalize_analysis(
         ),
         "timeline_used": ctx["timeline_used"],
         "model": ctx["model"],
+        "tier": ctx["tier"],
         "input_tokens": getattr(usage, "input_tokens", 0) or 0,
         "output_tokens": getattr(usage, "output_tokens", 0) or 0,
         "cache_read_tokens": getattr(
@@ -948,11 +975,12 @@ def analyze_clip(
     model: str = DEFAULT_MODEL,
     frame_number: Optional[int] = None,
     game_time: Optional[str] = None,
+    tier: Optional[str] = None,
 ) -> dict:
     """비스트리밍 분석 — 전체 응답을 한 번에 받는다."""
     prep = prepare_analysis(
         clip_id, user_question, match_id, puuid, model,
-        frame_number, game_time,
+        frame_number, game_time, tier,
     )
     response = prep["client"].messages.create(
         model=prep["model"],

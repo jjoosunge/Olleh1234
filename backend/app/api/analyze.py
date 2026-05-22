@@ -25,6 +25,8 @@ class AnalyzeRequest(BaseModel):
     frame_number: Optional[int] = Field(default=None, ge=1)
     # 'MM:SS' 게임 시각. 주면 CV 타이머 OCR 대신 이 값으로 타임라인 정렬.
     game_time: Optional[str] = None
+    # 사용자 티어 — 코칭 눈높이 보정용
+    tier: Optional[str] = None
     model: str = DEFAULT_MODEL
 
 
@@ -50,6 +52,7 @@ def analyze(req: AnalyzeRequest) -> dict:
             model=req.model,
             frame_number=req.frame_number,
             game_time=req.game_time,
+            tier=req.tier,
         )
     except FileNotFoundError as err:
         raise HTTPException(status_code=404, detail=str(err))
@@ -84,6 +87,7 @@ def analyze_stream(req: AnalyzeRequest) -> StreamingResponse:
             model=req.model,
             frame_number=req.frame_number,
             game_time=req.game_time,
+            tier=req.tier,
         )
     except FileNotFoundError as err:
         raise HTTPException(status_code=404, detail=str(err))

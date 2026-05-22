@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+dist/
+build/
+
+# Environment / DB
+.env
+*.db
+
+# Uploaded media
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db

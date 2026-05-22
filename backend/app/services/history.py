@@ -216,6 +216,51 @@ def clip_has_exemplary(clip_id: str) -> bool:
     return row["c"] > 0
 
 
+def rating_stats() -> dict:
+    """전체 분석의 평가 분포 (메타 코칭 통계용)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT rating_reading, rating_coaching FROM analyses"
+        ).fetchall()
+    finally:
+        conn.close()
+    total = len(rows)
+
+    def tally(key: str) -> dict:
+        up = sum(1 for r in rows if r[key] == "up")
+        down = sum(1 for r in rows if r[key] == "down")
+        return {"up": up, "down": down, "unrated": total - up - down}
+
+    return {
+        "total_analyses": total,
+        "reading": tally("rating_reading"),
+        "coaching": tally("rating_coaching"),
+    }
+
+
+def recent_analyses_for_report(limit: int = 15) -> list[dict]:
+    """메타 리포트용 최근 분석(질문 + 분석 텍스트). 👎 받은 분석은 제외."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT user_question, analysis_text FROM analyses "
+            "WHERE rating_reading IS NOT 'down' "
+            "AND rating_coaching IS NOT 'down' "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "user_question": r["user_question"],
+            "analysis_text": r["analysis_text"],
+        }
+        for r in rows
+    ]
+
+
 def _add_to_vec(analysis_id: int, question: str) -> None:
     """우수 분석의 질문을 임베딩해 학습 풀에 넣는다. 실패해도 조용히 넘어간다."""
     try:

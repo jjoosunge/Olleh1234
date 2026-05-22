@@ -86,6 +86,16 @@ export type AnalysisSummary = {
   rated_at: string | null
 }
 
+export type RatingTally = { up: number; down: number; unrated: number }
+
+export type RatingStats = {
+  total_analyses: number
+  reading: RatingTally
+  coaching: RatingTally
+}
+
+export type MetaReport = { report: string; based_on: number }
+
 async function unwrap<T>(res: Response): Promise<T> {
   if (res.ok) {
     return (await res.json()) as T
@@ -250,4 +260,17 @@ export async function deleteAnalysis(id: number): Promise<void> {
     method: 'DELETE',
   })
   await unwrap<{ deleted: boolean }>(res)
+}
+
+export async function getMetaStats(): Promise<RatingStats> {
+  const res = await fetch(`${BACKEND_URL}/api/meta/stats`)
+  return unwrap<RatingStats>(res)
+}
+
+// 최근 분석을 모아 반복 약점 메타 코칭 리포트 생성 (Claude 1회 호출).
+export async function generateMetaReport(): Promise<MetaReport> {
+  const res = await fetch(`${BACKEND_URL}/api/meta/report`, {
+    method: 'POST',
+  })
+  return unwrap<MetaReport>(res)
 }

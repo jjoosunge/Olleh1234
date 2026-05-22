@@ -3,6 +3,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.services.analyzer import generate_meta_report
 from app.services.cleanup import delete_clip_files
 from app.services.history import (
     clip_has_exemplary,
@@ -10,6 +11,8 @@ from app.services.history import (
     get_analysis,
     list_analyses,
     rate_analysis,
+    rating_stats,
+    recent_analyses_for_report,
 )
 
 router = APIRouter(prefix="/api", tags=["history"])
@@ -59,3 +62,19 @@ def remove(analysis_id: int) -> dict:
     if not delete_analysis(analysis_id):
         raise HTTPException(status_code=404, detail="Analysis not found")
     return {"deleted": True}
+
+
+@router.get("/meta/stats")
+def get_meta_stats() -> dict:
+    """분석 평가 분포 (메타 코칭 통계)."""
+    return rating_stats()
+
+
+@router.post("/meta/report")
+def post_meta_report() -> dict:
+    """최근 분석을 모아 반복 약점 메타 코칭 리포트를 생성한다(Claude 1회 호출)."""
+    analyses = recent_analyses_for_report(15)
+    try:
+        return generate_meta_report(analyses)
+    except RuntimeError as err:
+        raise HTTPException(status_code=500, detail=str(err))

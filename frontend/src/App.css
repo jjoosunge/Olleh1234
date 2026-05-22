@@ -367,3 +367,14 @@ h3.lose {
   min-width: 0;
   flex: 0 0 auto;
 }
+
+/* 메타 코칭 (누적 리포트·통계) */
+.meta-panel {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.meta-report {
+  margin-top: 10px;
+}

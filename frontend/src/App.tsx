@@ -6,9 +6,11 @@ import {
   deleteAnalysis,
   durationSeconds,
   frameUrl,
+  generateMetaReport,
   getFrameCv,
   getMatch,
   getMatchIds,
+  getMetaStats,
   getSummoner,
   listAnalyses,
   mapLimit,
@@ -21,8 +23,10 @@ import type {
   ClipMeta,
   FrameCv,
   MatchDetail,
+  MetaReport,
   Participant,
   Rating,
+  RatingStats,
   Summoner,
 } from './api'
 
@@ -149,10 +153,13 @@ function App() {
 
   const [error, setError] = useState<string | null>(null)
 
-  // 분석 히스토리
+  // 분석 히스토리 + 메타 코칭
   const [history, setHistory] = useState<AnalysisSummary[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [metaStats, setMetaStats] = useState<RatingStats | null>(null)
+  const [metaReport, setMetaReport] = useState<MetaReport | null>(null)
+  const [metaLoading, setMetaLoading] = useState(false)
 
   const selectedMatch = matches.find((m) => m.matchId === selectedMatchId) ?? null
   const resultRecord =
@@ -256,6 +263,7 @@ function App() {
     setHistoryLoading(true)
     try {
       setHistory(await listAnalyses(50))
+      setMetaStats(await getMetaStats())
     } catch {
       // 히스토리 로드 실패가 메인 흐름을 막지 않도록 조용히 무시
     } finally {
@@ -272,6 +280,7 @@ function App() {
     try {
       const updated = await rateAnalysis(id, reading, coaching)
       setHistory((prev) => prev.map((h) => (h.id === id ? updated : h)))
+      getMetaStats().then(setMetaStats).catch(() => {})
     } catch (e) {
       setError(errMsg(e))
     }
@@ -283,6 +292,17 @@ function App() {
       setHistory((prev) => prev.filter((h) => h.id !== id))
     } catch (e) {
       setError(errMsg(e))
+    }
+  }
+
+  async function handleGenerateReport() {
+    setMetaLoading(true)
+    try {
+      setMetaReport(await generateMetaReport())
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setMetaLoading(false)
     }
   }
 
@@ -617,9 +637,34 @@ function App() {
         </section>
       )}
 
-      {/* 분석 히스토리 */}
+      {/* 분석 히스토리 + 메타 코칭 */}
       <section className="card">
         <h2>분석 히스토리</h2>
+        {metaStats && metaStats.total_analyses > 0 && (
+          <div className="meta-panel">
+            <p className="muted small">
+              분석 {metaStats.total_analyses}건 · 판독 👍
+              {metaStats.reading.up}/👎{metaStats.reading.down} · 코칭 👍
+              {metaStats.coaching.up}/👎{metaStats.coaching.down}
+            </p>
+            <button
+              type="button"
+              className="small-btn"
+              onClick={handleGenerateReport}
+              disabled={metaLoading}
+            >
+              {metaLoading ? '리포트 생성 중…' : '누적 코칭 리포트 생성'}
+            </button>
+            {metaReport && (
+              <div className="meta-report">
+                <p className="answer">{metaReport.report}</p>
+                <p className="muted small">
+                  최근 분석 {metaReport.based_on}건 기준
+                </p>
+              </div>
+            )}
+          </div>
+        )}
         {historyLoading && history.length === 0 && (
           <p className="muted">불러오는 중…</p>
         )}

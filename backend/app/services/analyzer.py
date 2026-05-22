@@ -880,3 +880,56 @@ def analyze_clip(
         "analysis_id": analysis_id,
         "metadata": metadata_out,
     }
+
+
+META_REPORT_SYSTEM = """당신은 '올레'입니다. 한 플레이어의 여러 코칭 기록을 모아
+가로질러 반복되는 약점을 짚어주는 '메타 코칭'을 합니다.
+
+- 개별 장면 코칭이 아니라, 여러 분석에 걸쳐 되풀이되는 패턴만 뽑아라.
+- 약점 2~4개를 중요도 순으로. 각 약점마다 (1) 어떤 패턴인지 (2) 왜 문제인지
+  (3) 다음 게임에서 의식할 것 한 가지.
+- 기록이 적으면 단정하지 말고 표본이 적다고 밝혀라.
+- 짧고 본질만. 헤더 남발 금지. 한국어."""
+
+
+def generate_meta_report(
+    analyses: list[dict], model: str = DEFAULT_MODEL
+) -> dict:
+    """최근 분석 기록을 모아 반복 약점을 정리한 메타 코칭 리포트를 만든다."""
+    if not analyses:
+        return {
+            "report": "아직 분석 기록이 없습니다. 분석을 몇 건 쌓은 뒤 다시 생성하세요.",
+            "based_on": 0,
+        }
+
+    lines: list[str] = []
+    for i, a in enumerate(analyses, 1):
+        lines.append(f"[기록 {i}] 질문: {a.get('user_question', '')}")
+        lines.append(f"코칭: {a.get('analysis_text', '')}")
+        lines.append("")
+
+    client = _get_client()
+    response = client.messages.create(
+        model=model,
+        max_tokens=1500,
+        system=[{"type": "text", "text": META_REPORT_SYSTEM}],
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "다음은 한 플레이어의 최근 코칭 기록이다. "
+                    "반복되는 약점을 메타 코칭으로 정리하라.\n\n"
+                    + "\n".join(lines)
+                ),
+            }
+        ],
+    )
+    text = next(
+        (block.text for block in response.content if block.type == "text"),
+        "",
+    )
+    print(
+        f"[Meta] report based_on={len(analyses)} model={model} "
+        f"cost=${_estimate_cost(response.usage, model)}"
+    )
+    return {"report": text, "based_on": len(analyses)}

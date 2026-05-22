@@ -161,6 +161,7 @@ SCREEN_READING_GUIDE_SINGLE = """=== 인게임 화면(한 장면)을 읽는 법 
 - 함께 주어지는 `=== CV 자동 판독 ===`과 `=== 타임라인 정밀 데이터 ===`는 코드·Riot API가 추출한 사실이다. 이미지로 본 것과 충돌하면 이 구조화 데이터를 우선하라.
 - CV가 '화질 낮음'·'게임 시각 판독 실패'로 표시한 항목은 이미지로 추측해 채우지 말고 "정보를 얻기 힘들다"고 명시하라.
 - 타임라인은 분 단위 스냅샷이다. 클립 시각과 스냅샷 시각의 차이를 감안해서 읽어라.
+- **맵 상황은 다음 5가지를 먼저 정리한 뒤 코칭하라:** ① 보이는 적 / 안 보이는 적 — 미니맵·화면에 안 보이는 적이 곧 위협이다 ② 양 팀 무게중심(아군·적이 각각 어느 사이드·라인에 모여 있나) ③ 시야 — 어디가 밝고 어디가 비었나, 빈 곳이 위험 구역이다 ④ 다음 오브젝트(드래곤/전령/바론)까지 남은 시간과 그 주변 인원·시야 ⑤ 사이드 라인 푸시 상태가 누구에게 압박·기회를 만드는가. 이 다섯을 먼저 읽고, 그 위에서 질문에 답하라.
 - 결과론 금지: 결과를 보고 평가하지 말고, 이 장면에서 어떤 선택지가 보였는지로 본다."""
 
 # USD per 1M tokens (claude pricing, 2026)
@@ -610,10 +611,25 @@ def _summarize_timeline_at(
 
     window_ms = 90 * 1000
     events: list[tuple[int, str]] = []
+    wards = {"블루": 0, "레드": 0}
+    ctrl_wards = {"블루": 0, "레드": 0}
+    wards_killed = 0
     for fr in frames:
         for ev in fr.get("events") or []:
             ts = ev.get("timestamp") or 0
-            if abs(ts - target_ms) <= window_ms:
+            if abs(ts - target_ms) > window_ms:
+                continue
+            etype = ev.get("type")
+            if etype == "WARD_PLACED":
+                meta = roster.get(int(ev.get("creatorId") or 0))
+                team = meta.get("team") if meta else None
+                if team in wards:
+                    wards[team] += 1
+                    if ev.get("wardType") == "CONTROL_WARD":
+                        ctrl_wards[team] += 1
+            elif etype == "WARD_KILL":
+                wards_killed += 1
+            else:
                 desc = _describe_event(ev, roster)
                 if desc:
                     events.append((ts, desc))
@@ -623,6 +639,13 @@ def _summarize_timeline_at(
         for ts, desc in sorted(events):
             s = ts // 1000
             lines.append(f"  {s // 60}:{s % 60:02d} — {desc}")
+    if wards["블루"] or wards["레드"] or wards_killed:
+        lines.append("")
+        lines.append(
+            f"[시야 — ±90초] 와드 설치 블루 {wards['블루']} / "
+            f"레드 {wards['레드']} (제어와드 블루 {ctrl_wards['블루']} / "
+            f"레드 {ctrl_wards['레드']}), 와드 제거 {wards_killed}건"
+        )
     return "\n".join(lines)
 
 

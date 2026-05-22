@@ -17,6 +17,8 @@ class AnalyzeRequest(BaseModel):
     puuid: Optional[str] = None
     # 있으면 단일 프레임 모드(그 1장만 분석), 없으면 멀티프레임 모드.
     frame_number: Optional[int] = Field(default=None, ge=1)
+    # 'MM:SS' 게임 시각. 주면 CV 타이머 OCR 대신 이 값으로 타임라인 정렬.
+    game_time: Optional[str] = None
     model: str = DEFAULT_MODEL
 
 
@@ -41,6 +43,7 @@ def analyze(req: AnalyzeRequest) -> dict:
             puuid=req.puuid,
             model=req.model,
             frame_number=req.frame_number,
+            game_time=req.game_time,
         )
     except FileNotFoundError as err:
         raise HTTPException(status_code=404, detail=str(err))

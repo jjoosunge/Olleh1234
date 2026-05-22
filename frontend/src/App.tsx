@@ -6,6 +6,7 @@ import {
   deleteAnalysis,
   durationSeconds,
   frameUrl,
+  getFrameCv,
   getMatch,
   getMatchIds,
   getSummoner,
@@ -18,6 +19,7 @@ import type {
   AnalysisSummary,
   AnalyzeResult,
   ClipMeta,
+  FrameCv,
   MatchDetail,
   Participant,
   Rating,
@@ -133,8 +135,11 @@ function App() {
   const [clip, setClip] = useState<ClipMeta | null>(null)
   const [uploading, setUploading] = useState(false)
 
-  // 4-1단계: 분석할 단일 프레임 선택
+  // 4-1단계: 분석할 단일 프레임 선택 + CV 미리보기
   const [selectedFrame, setSelectedFrame] = useState<number | null>(null)
+  const [gameTime, setGameTime] = useState('')
+  const [frameCv, setFrameCv] = useState<FrameCv | null>(null)
+  const [frameCvLoading, setFrameCvLoading] = useState(false)
 
   // 5단계: 질문/분석
   const [question, setQuestion] = useState('')
@@ -209,6 +214,8 @@ function App() {
     setUploading(true)
     setClip(null)
     setSelectedFrame(null)
+    setGameTime('')
+    setFrameCv(null)
     setResult(null)
     try {
       const meta = await uploadClip(file, fpsInterval)
@@ -233,6 +240,7 @@ function App() {
         selectedMatchId,
         summoner?.puuid ?? null,
         selectedFrame,
+        gameTime.trim() || null,
         model,
       )
       setResult(r)
@@ -278,6 +286,22 @@ function App() {
     }
   }
 
+  async function loadFrameCv(frameNumber: number) {
+    if (!clip) return
+    setFrameCv(null)
+    setFrameCvLoading(true)
+    try {
+      const cv = await getFrameCv(clip.clip_id, frameNumber)
+      setFrameCv(cv)
+      setGameTime(cv.game_time ?? '')
+    } catch {
+      // CV 미리보기 실패 — 게임 시각은 사용자가 직접 입력
+      setGameTime('')
+    } finally {
+      setFrameCvLoading(false)
+    }
+  }
+
   function reset() {
     setRiotId('')
     setSummoner(null)
@@ -286,6 +310,8 @@ function App() {
     setFile(null)
     setClip(null)
     setSelectedFrame(null)
+    setGameTime('')
+    setFrameCv(null)
     setQuestion('')
     setResult(null)
     setError(null)
@@ -468,6 +494,7 @@ function App() {
                     onClick={() => {
                       setSelectedFrame(n)
                       setResult(null)
+                      loadFrameCv(n)
                     }}
                   >
                     <img
@@ -479,6 +506,33 @@ function App() {
                   </button>
                 ))}
               </div>
+              {selectedFrame && (
+                <div className="game-time-row">
+                  <label className="inline">
+                    게임 시각
+                    <input
+                      type="text"
+                      className="time-input"
+                      placeholder="예: 8:32"
+                      value={gameTime}
+                      onChange={(e) => setGameTime(e.target.value)}
+                    />
+                  </label>
+                  {frameCvLoading && (
+                    <span className="muted small">자동 감지 중…</span>
+                  )}
+                  {!frameCvLoading && frameCv && (
+                    <span className="muted small">
+                      {frameCv.game_time
+                        ? `타이머 자동 감지: ${frameCv.game_time}`
+                        : '타이머 자동 감지 실패 — 직접 입력하세요'}
+                      {frameCv.frame_quality === 'low'
+                        ? ' · ⚠ 프레임 화질 낮음'
+                        : ''}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -535,6 +589,15 @@ function App() {
                 {result.metadata.good_examples_used}개 ·{' '}
                 {result.metadata.model} · ≈ $
                 {result.metadata.estimated_cost_usd}
+              </p>
+              <p className="muted small">
+                게임 시각 {result.metadata.game_time ?? '판독 실패'}
+                {result.metadata.timeline_used
+                  ? ' · 타임라인 적용됨'
+                  : ' · 타임라인 미적용'}
+                {result.metadata.frame_quality === 'low'
+                  ? ' · ⚠ 프레임 화질 낮음'
+                  : ''}
               </p>
               {result.analysis_id != null ? (
                 <RatingBlock

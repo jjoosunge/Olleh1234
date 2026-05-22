@@ -352,3 +352,18 @@ h3.lose {
   font-size: 12px;
   margin-top: 8px;
 }
+
+/* 게임 시각 입력 (CV 자동 감지값) */
+.game-time-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.game-time-row input.time-input {
+  width: 90px;
+  min-width: 0;
+  flex: 0 0 auto;
+}

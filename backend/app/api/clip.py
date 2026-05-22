@@ -13,6 +13,7 @@ class FpsIntervalChoice(IntEnum):
     TWO_SEC = 2
     THREE_SEC = 3
 
+from app.services import cv_processor
 from app.services.clip_processor import extract_frames
 
 router = APIRouter(prefix="/api/clip", tags=["clip"])
@@ -142,6 +143,26 @@ def get_frame(clip_id: str, frame_number: int):
         raise HTTPException(status_code=404, detail="Frame not found")
 
     return FileResponse(frame_path, media_type="image/jpeg")
+
+
+@router.get("/{clip_id}/frames/{frame_number}/cv")
+def get_frame_cv(clip_id: str, frame_number: int) -> dict:
+    """단일 프레임 CV 전처리 미리보기 — 화질·게임 시각·미니맵 점.
+    프론트가 프레임 선택 시 호출해 '감지된 게임 시각'을 채운다."""
+    if frame_number < 1:
+        raise HTTPException(status_code=404, detail="Frame not found")
+    metadata = _load_metadata(clip_id)
+    if frame_number > int(metadata.get("frame_count", 0)):
+        raise HTTPException(status_code=404, detail="Frame not found")
+
+    frames_dir = _clip_dir(clip_id) / "frames"
+    frame_path = frames_dir / f"frame_{frame_number:04d}.jpg"
+    if not frame_path.exists():
+        raise HTTPException(status_code=404, detail="Frame not found")
+    mm_path = frames_dir / f"minimap_{frame_number:04d}.jpg"
+    return cv_processor.analyze_frame(
+        frame_path, mm_path if mm_path.exists() else None
+    )
 
 
 @router.delete("/{clip_id}")

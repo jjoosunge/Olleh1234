@@ -49,6 +49,11 @@ export type AnalysisMetadata = {
   notes_referenced: number
   good_examples_used: number
   match_id_used: string | null
+  game_time: string | null
+  game_time_source: string
+  frame_quality: string | null
+  minimap_quality: string | null
+  timeline_used: boolean
   model: string
   input_tokens: number
   output_tokens: number
@@ -145,12 +150,36 @@ export function frameUrl(clipId: string, frameNumber: number): string {
   )}/frames/${frameNumber}`
 }
 
+export type FrameCv = {
+  frame_quality: string
+  frame_blur_score: number | null
+  minimap_quality: string
+  game_time_seconds: number | null
+  game_time: string | null
+  timer_confidence: string
+  minimap_dots: { side: string; x: number; y: number }[]
+}
+
+// 프레임 선택 시 CV 전처리 미리보기 (화질·게임 시각 자동 감지).
+export async function getFrameCv(
+  clipId: string,
+  frameNumber: number,
+): Promise<FrameCv> {
+  const res = await fetch(
+    `${BACKEND_URL}/api/clip/${encodeURIComponent(
+      clipId,
+    )}/frames/${frameNumber}/cv`,
+  )
+  return unwrap<FrameCv>(res)
+}
+
 export async function analyze(
   clipId: string,
   userQuestion: string,
   matchId: string | null,
   puuid: string | null,
   frameNumber: number,
+  gameTime: string | null,
   model?: string,
 ): Promise<AnalyzeResult> {
   const res = await fetch(`${BACKEND_URL}/api/analyze`, {
@@ -162,6 +191,7 @@ export async function analyze(
       match_id: matchId,
       puuid,
       frame_number: frameNumber,
+      game_time: gameTime,
       ...(model ? { model } : {}),
     }),
   })

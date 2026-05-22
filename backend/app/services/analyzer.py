@@ -8,6 +8,7 @@ import anthropic
 
 from app.db.database import PROJECT_ROOT
 from app.services.cache import get_cached, set_cached
+from app.services import cv_processor
 from app.services.history import save_analysis, search_good_analyses
 from app.services.rag import search_knowledge
 from app.services.riot_api import RiotAPIClient, RiotAPIError
@@ -157,6 +158,9 @@ SCREEN_READING_GUIDE_SINGLE = """=== 인게임 화면(한 장면)을 읽는 법 
 - 하단 HUD: 스킬 쿨다운, 소환사 주문(점멸 등), 아이템, 보유 골드.
 - 상단/스코어: 양 팀 킬, 타워, 골드 차, 게임 시간. 화면 우측 킬/데스 로그.
 - 화면의 게임 타이머로 이 장면이 정확히 몇 분 몇 초인지 특정해서 말하라.
+- 함께 주어지는 `=== CV 자동 판독 ===`과 `=== 타임라인 정밀 데이터 ===`는 코드·Riot API가 추출한 사실이다. 이미지로 본 것과 충돌하면 이 구조화 데이터를 우선하라.
+- CV가 '화질 낮음'·'게임 시각 판독 실패'로 표시한 항목은 이미지로 추측해 채우지 말고 "정보를 얻기 힘들다"고 명시하라.
+- 타임라인은 분 단위 스냅샷이다. 클립 시각과 스냅샷 시각의 차이를 감안해서 읽어라.
 - 결과론 금지: 결과를 보고 평가하지 말고, 이 장면에서 어떤 선택지가 보였는지로 본다."""
 
 # USD per 1M tokens (claude pricing, 2026)
@@ -261,6 +265,16 @@ def _load_single_frame_blocks(
         blocks.append(_image_block(mm_path))
         n_mini = 1
     return blocks, 1, n_mini
+
+
+def _frame_paths(
+    clip_dir: Path, frame_number: int
+) -> tuple[Path, Optional[Path]]:
+    """단일 프레임의 (전체화면 경로, 미니맵 경로 또는 None)."""
+    frames_dir = clip_dir / "frames"
+    fp = frames_dir / f"frame_{frame_number:04d}.jpg"
+    mp = frames_dir / f"minimap_{frame_number:04d}.jpg"
+    return fp, (mp if mp.exists() else None)
 
 
 def _note_category(source_file: str) -> str:
@@ -429,32 +443,237 @@ def _summarize_match(data: dict, user_puuid: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
-def _try_load_match(
-    match_id: str, user_puuid: Optional[str] = None
-) -> tuple[Optional[str], Optional[str]]:
-    """심화 요약은 raw 매치가 필요하다. refined 캐시(match:)는 필드가
-    빈약하므로 raw 전용 캐시 키(match_raw:)를 사용한다.
-    반환: (매치 요약 텍스트, 사용자 본인 식별자) — 실패 시 (None, None)."""
+def _get_raw_match(match_id: str) -> Optional[dict]:
+    """raw 매치를 캐시(match_raw:)에서 가져오거나 Riot에서 받아 캐시한다.
+    refined 캐시(match:)는 필드가 빈약해 raw 전용 키를 쓴다."""
     try:
         cached = get_cached(f"match_raw:{match_id}")
         if cached is not None:
-            return (
-                _summarize_match(cached, user_puuid),
-                _find_user_desc(cached, user_puuid),
-            )
-
-        client = RiotAPIClient()
-        raw = client.get_match_by_id(match_id)
+            return cached
+        raw = RiotAPIClient().get_match_by_id(match_id)
         if raw is None:
-            return None, None
+            return None
         set_cached(f"match_raw:{match_id}", raw)
-        return (
-            _summarize_match(raw, user_puuid),
-            _find_user_desc(raw, user_puuid),
-        )
+        return raw
     except (RuntimeError, RiotAPIError) as err:
         print(f"[Analyze] match fetch skipped: {err}")
-        return None, None
+        return None
+
+
+def _try_load_timeline(match_id: str) -> Optional[dict]:
+    """매치 타임라인을 캐시(timeline_raw:)에서 가져오거나 Riot에서 받는다."""
+    try:
+        cached = get_cached(f"timeline_raw:{match_id}")
+        if cached is not None:
+            return cached
+        tl = RiotAPIClient().get_match_timeline(match_id)
+        if tl is None:
+            return None
+        set_cached(f"timeline_raw:{match_id}", tl)
+        return tl
+    except (RuntimeError, RiotAPIError) as err:
+        print(f"[Analyze] timeline fetch skipped: {err}")
+        return None
+
+
+# 소환사의 협곡 좌표 정규화 기준값 (참가자 좌표는 대략 0~15000)
+MAP_SIZE = 15000
+
+
+def _build_roster(raw_match: dict) -> dict:
+    """participantId(1~10) -> {champ, name, pos, team, puuid}."""
+    info = (
+        raw_match.get("info")
+        if isinstance(raw_match.get("info"), dict)
+        else raw_match
+    )
+    roster: dict = {}
+    for p in info.get("participants") or []:
+        pid = p.get("participantId")
+        if pid is None:
+            continue
+        roster[int(pid)] = {
+            "champ": p.get("championName") or "?",
+            "name": p.get("riotIdGameName") or p.get("summonerName") or "?",
+            "pos": p.get("teamPosition") or p.get("individualPosition") or "?",
+            "team": "블루" if p.get("teamId") == 100 else "레드",
+            "puuid": p.get("puuid"),
+        }
+    return roster
+
+
+def _region(nx: float, ny: float) -> str:
+    """정규화 좌표(0~1, 좌하단 블루 기지 원점)를 대략적 구역명으로."""
+    if nx < 0.16 and ny < 0.16:
+        return "블루 기지"
+    if nx > 0.84 and ny > 0.84:
+        return "레드 기지"
+    d = nx - ny  # >0 봇(우하)쪽, <0 탑(좌상)쪽
+    if d > 0.2:
+        return "봇 쪽"
+    if d < -0.2:
+        return "탑 쪽"
+    return "미드 쪽"
+
+
+_MONSTER_KO = {
+    "DRAGON": "드래곤",
+    "RIFTHERALD": "전령",
+    "BARON_NASHOR": "바론",
+    "HORDE": "공허 유충",
+}
+
+
+def _describe_event(ev: dict, roster: dict) -> Optional[str]:
+    """타임라인 이벤트를 한 줄 한국어 설명으로. 관심 없는 타입은 None."""
+
+    def champ(pid: Any) -> Optional[str]:
+        if not pid:
+            return None
+        meta = roster.get(int(pid))
+        return meta["champ"] if meta else None
+
+    t = ev.get("type")
+    if t == "CHAMPION_KILL":
+        victim = champ(ev.get("victimId"))
+        if not victim:
+            return None
+        killer = champ(ev.get("killerId")) or "처치자 불명"
+        n_assist = len(ev.get("assistingParticipantIds") or [])
+        s = f"킬 — {killer}이(가) {victim} 처치"
+        if n_assist:
+            s += f" (어시 {n_assist})"
+        return s
+    if t == "ELITE_MONSTER_KILL":
+        name = _MONSTER_KO.get(
+            ev.get("monsterType", ""), ev.get("monsterType", "몬스터")
+        )
+        killer = champ(ev.get("killerId"))
+        return f"오브젝트 — {killer or '한 팀'} 측이 {name} 처치"
+    if t == "BUILDING_KILL":
+        bt = ev.get("buildingType", "")
+        lane = ev.get("laneType", "").replace("_LANE", "").lower()
+        lane_ko = {"top": "탑", "mid": "미드", "bot": "봇"}.get(lane, lane)
+        name = "타워" if bt == "TOWER_BUILDING" else "억제기"
+        return f"건물 — {lane_ko} {name} 파괴"
+    return None
+
+
+def _summarize_timeline_at(
+    timeline: dict,
+    raw_match: dict,
+    game_secs: int,
+    user_puuid: Optional[str],
+) -> str:
+    """클립 시각에 가장 가까운 타임라인 스냅샷 + 주변 이벤트를 구조화한다."""
+    info = (
+        timeline.get("info")
+        if isinstance(timeline.get("info"), dict)
+        else timeline
+    )
+    frames = info.get("frames") or []
+    if not frames:
+        return ""
+    target_ms = game_secs * 1000
+    snap = min(
+        frames, key=lambda f: abs((f.get("timestamp") or 0) - target_ms)
+    )
+    roster = _build_roster(raw_match)
+    pframes = snap.get("participantFrames") or {}
+    snap_secs = (snap.get("timestamp") or 0) // 1000
+
+    lines = [
+        "=== 타임라인 정밀 데이터 (Riot 정답값) ===",
+        f"클립 시각 약 {game_secs // 60}:{game_secs % 60:02d}, "
+        f"가장 가까운 타임라인 스냅샷 {snap_secs // 60}:{snap_secs % 60:02d}.",
+        "좌표·골드·레벨·CS는 Riot가 준 정답값 — 미니맵·화면 추측보다 우선하라.",
+        "위치 = 맵 좌하단(블루) 원점 기준 정규화 %.",
+        "",
+    ]
+    for pid_str, pf in sorted(pframes.items(), key=lambda kv: int(kv[0])):
+        meta = roster.get(int(pid_str), {})
+        pos = pf.get("position") or {}
+        nx = min(max((pos.get("x") or 0) / MAP_SIZE, 0.0), 1.0)
+        ny = min(max((pos.get("y") or 0) / MAP_SIZE, 0.0), 1.0)
+        cs = int(pf.get("minionsKilled") or 0) + int(
+            pf.get("jungleMinionsKilled") or 0
+        )
+        line = (
+            f"  [{meta.get('team', '?')}·{meta.get('pos', '?')}] "
+            f"{meta.get('champ', '?')} | 위치 "
+            f"({nx * 100:.0f}%,{ny * 100:.0f}%) {_region(nx, ny)} | "
+            f"Lv{pf.get('level', '?')} 골드{pf.get('totalGold', '?')} CS{cs}"
+        )
+        if user_puuid and meta.get("puuid") == user_puuid:
+            line += "  ← 사용자 본인"
+        lines.append(line)
+
+    window_ms = 90 * 1000
+    events: list[tuple[int, str]] = []
+    for fr in frames:
+        for ev in fr.get("events") or []:
+            ts = ev.get("timestamp") or 0
+            if abs(ts - target_ms) <= window_ms:
+                desc = _describe_event(ev, roster)
+                if desc:
+                    events.append((ts, desc))
+    if events:
+        lines.append("")
+        lines.append("[클립 전후 ±90초 주요 이벤트]")
+        for ts, desc in sorted(events):
+            s = ts // 1000
+            lines.append(f"  {s // 60}:{s % 60:02d} — {desc}")
+    return "\n".join(lines)
+
+
+def _format_cv(
+    cv: dict, game_secs: Optional[int], time_source: str
+) -> str:
+    """CV 전처리 결과를 프롬프트용 텍스트로."""
+    lines = ["=== CV 자동 판독 (코드가 프레임에서 추출한 사실) ==="]
+    if cv.get("frame_quality") == "low":
+        lines.append(
+            "프레임 화질: 낮음 — HUD 숫자·작은 아이콘 등 세부는 신뢰하지 말고 "
+            "'정보를 얻기 힘들다'로 처리하라."
+        )
+    else:
+        lines.append("프레임 화질: 양호")
+
+    if game_secs is not None:
+        src = {"frame": "프레임 타이머 OCR", "user": "사용자 입력"}.get(
+            time_source, time_source
+        )
+        lines.append(
+            f"게임 시각: {game_secs // 60}:{game_secs % 60:02d} ({src})"
+        )
+    else:
+        lines.append(
+            "게임 시각: 판독 실패 — 화면 타이머가 보이면 그것으로만 시각을 말하라."
+        )
+
+    mq = cv.get("minimap_quality")
+    dots = cv.get("minimap_dots") or []
+    if mq == "low":
+        lines.append(
+            "미니맵 화질: 낮음 — 미니맵 세부는 '정보를 얻기 힘들다'로 처리하라."
+        )
+    elif mq == "ok":
+        allies = sum(1 for d in dots if d.get("side") == "ally")
+        enemies = sum(1 for d in dots if d.get("side") == "enemy")
+        lines.append(
+            f"미니맵 점 검출(색 기반 근사): 아군 {allies} / 적 {enemies}. "
+            "좌표는 미니맵 좌상단 0% ~ 우하단 100%."
+        )
+        for d in dots:
+            side = "적" if d.get("side") == "enemy" else "아군"
+            lines.append(
+                f"  - {side} ({d.get('x', 0) * 100:.0f}%, "
+                f"{d.get('y', 0) * 100:.0f}%)"
+            )
+        lines.append(
+            "(색 기반 근사라 누락·오검출 가능. 미니맵 이미지와 교차 확인하라.)"
+        )
+    return "\n".join(lines)
 
 
 def _estimate_cost(usage: Any, model: str) -> float:
@@ -486,6 +705,7 @@ def analyze_clip(
     puuid: Optional[str] = None,
     model: str = DEFAULT_MODEL,
     frame_number: Optional[int] = None,
+    game_time: Optional[str] = None,
 ) -> dict:
     clip_dir = CLIPS_DIR / clip_id
     metadata_path = clip_dir / "metadata.json"
@@ -497,11 +717,29 @@ def analyze_clip(
 
     # 단일 프레임 모드(현재 기본): 사용자가 고른 1장만 분석한다.
     # frame_number 없이 호출하면 멀티프레임 모드로 동작한다(기능 보존).
+    cv_facts: Optional[dict] = None
+    game_secs: Optional[int] = None
+    time_source = "none"
     if frame_number is not None:
         frame_blocks, n_full, n_mini = _load_single_frame_blocks(
             clip_dir, frame_number
         )
         screen_guide = SCREEN_READING_GUIDE_SINGLE
+        # CV 전처리: 화질 판정 + 타이머 OCR + 미니맵 점 검출
+        fp, mp = _frame_paths(clip_dir, frame_number)
+        override = (
+            cv_processor.parse_game_time(game_time) if game_time else None
+        )
+        try:
+            cv_facts = cv_processor.analyze_frame(
+                fp, mp, read_timer=(override is None)
+            )
+        except Exception as err:
+            print(f"[Analyze] CV preprocess failed: {err}")
+        if override is not None:
+            game_secs, time_source = override, "user"
+        elif cv_facts and cv_facts.get("game_time_seconds") is not None:
+            game_secs, time_source = cv_facts["game_time_seconds"], "frame"
     else:
         frame_blocks, n_full, n_mini = _load_frames_as_blocks(
             clip_dir, frame_count
@@ -509,9 +747,19 @@ def analyze_clip(
         screen_guide = SCREEN_READING_GUIDE
 
     notes = search_knowledge(user_question, top_k=5)
-    match_summary, user_desc = (
-        _try_load_match(match_id, puuid) if match_id else (None, None)
-    )
+    raw_match = _get_raw_match(match_id) if match_id else None
+    match_summary = _summarize_match(raw_match, puuid) if raw_match else None
+    user_desc = _find_user_desc(raw_match, puuid) if raw_match else None
+
+    # 타임라인 정밀 데이터: 게임 시각을 알고 매치가 있을 때만
+    timeline_block: Optional[str] = None
+    if raw_match and game_secs is not None and match_id:
+        tl = _try_load_timeline(match_id)
+        if tl:
+            timeline_block = _summarize_timeline_at(
+                tl, raw_match, game_secs, puuid
+            )
+
     # 과거에 좋게 평가된 분석을 질문 유사도로 검색해 예시로 주입(in-context 학습)
     good_examples = search_good_analyses(user_question, top_k=2)
 
@@ -530,6 +778,15 @@ def analyze_clip(
                 "type": "text",
                 "text": match_summary,
                 "cache_control": {"type": "ephemeral"},
+            }
+        )
+    if timeline_block:
+        user_content.append({"type": "text", "text": timeline_block})
+    if cv_facts is not None:
+        user_content.append(
+            {
+                "type": "text",
+                "text": _format_cv(cv_facts, game_secs, time_source),
             }
         )
     if good_examples:
@@ -590,6 +847,13 @@ def analyze_clip(
         "notes_referenced": len(notes),
         "good_examples_used": len(good_examples),
         "match_id_used": match_id if match_summary else None,
+        "game_time": cv_processor.fmt_secs(game_secs),
+        "game_time_source": time_source,
+        "frame_quality": cv_facts.get("frame_quality") if cv_facts else None,
+        "minimap_quality": (
+            cv_facts.get("minimap_quality") if cv_facts else None
+        ),
+        "timeline_used": timeline_block is not None,
         "model": model,
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
@@ -618,8 +882,10 @@ def analyze_clip(
         print(f"[Analyze] save_analysis failed: {err}")
 
     mode = f"frame#{frame_number}" if frame_number is not None else "multi"
+    gt = cv_processor.fmt_secs(game_secs) or "?"
     print(
-        f"[Analyze] clip={clip_id[:8]} mode={mode} frames={n_full} "
+        f"[Analyze] clip={clip_id[:8]} mode={mode} t={gt} "
+        f"timeline={'Y' if timeline_block else 'N'} frames={n_full} "
         f"minimap={n_mini} notes={len(notes)} examples={len(good_examples)} "
         f"id={analysis_id} model={model} cost=${cost}"
     )

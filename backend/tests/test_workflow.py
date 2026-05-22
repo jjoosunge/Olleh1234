@@ -16,9 +16,11 @@ from app.services.analyzer import (
     _load_single_frame_blocks,
     _norm_duration_seconds,
     _note_category,
+    _region,
     _select_frame_indices,
     _summarize_match,
 )
+from app.services.cv_processor import parse_game_time
 from app.services.history import _is_exemplary
 from app.services.riot_api import RiotAPIClient
 
@@ -403,6 +405,34 @@ class ExemplaryTest(unittest.TestCase):
         self.assertFalse(_is_exemplary("up", "down"))
         self.assertFalse(_is_exemplary("down", "down"))
         self.assertFalse(_is_exemplary(None, None))
+
+
+class CvTimerTest(unittest.TestCase):
+    """CV 타이머 문자열 파싱 — 형식·범위 검증."""
+
+    def test_valid(self):
+        self.assertEqual(parse_game_time("8:32"), 512)
+        self.assertEqual(parse_game_time("12:05"), 725)
+        self.assertEqual(parse_game_time("타이머 0:45 표시"), 45)
+
+    def test_invalid(self):
+        self.assertIsNone(parse_game_time(""))
+        self.assertIsNone(parse_game_time("abc"))
+        self.assertIsNone(parse_game_time("8:99"))    # 초 60 이상
+        self.assertIsNone(parse_game_time("999:00"))  # 게임시간 범위 초과
+
+
+class RegionTest(unittest.TestCase):
+    """타임라인 정규화 좌표 → 대략적 구역명."""
+
+    def test_bases(self):
+        self.assertEqual(_region(0.05, 0.05), "블루 기지")
+        self.assertEqual(_region(0.95, 0.95), "레드 기지")
+
+    def test_lanes(self):
+        self.assertEqual(_region(0.8, 0.2), "봇 쪽")
+        self.assertEqual(_region(0.2, 0.8), "탑 쪽")
+        self.assertEqual(_region(0.5, 0.5), "미드 쪽")
 
 
 if __name__ == "__main__":

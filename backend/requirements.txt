@@ -7,3 +7,4 @@ sqlite-vec
 pillow
 requests
 python-multipart
+rapidocr-onnxruntime  # CV 전처리 (opencv-python·numpy·onnxruntime 동반)

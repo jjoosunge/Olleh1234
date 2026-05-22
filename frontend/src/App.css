@@ -253,6 +253,29 @@ h3.lose {
   border-color: var(--accent);
 }
 
+/* 선택 프레임 큰 미리보기 + ◀▶ 이동 */
+.frame-preview {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.frame-preview img {
+  flex: 1;
+  min-width: 0;
+  max-width: 760px;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  display: block;
+}
+
+.frame-nav {
+  flex: 0 0 auto;
+  font-size: 18px;
+  padding: 0 14px;
+}
+
 /* 평가 (👍/👎) */
 .rating-block {
   display: flex;

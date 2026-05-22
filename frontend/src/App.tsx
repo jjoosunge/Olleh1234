@@ -338,6 +338,13 @@ function App() {
     }
   }
 
+  function pickFrame(n: number) {
+    if (!clip || n < 1 || n > clip.frame_count) return
+    setSelectedFrame(n)
+    setResult(null)
+    loadFrameCv(n)
+  }
+
   function reset() {
     setRiotId('')
     setSummoner(null)
@@ -540,9 +547,62 @@ function App() {
               <p className="muted small">
                 분석할 장면 1장을 고르세요
                 {selectedFrame
-                  ? ` · 선택: ${selectedFrame}번 프레임`
+                  ? ` · 선택: ${selectedFrame} / ${clip.frame_count}`
                   : ''}
               </p>
+              {selectedFrame && (
+                <>
+                  <div className="frame-preview">
+                    <button
+                      type="button"
+                      className="frame-nav"
+                      onClick={() => pickFrame(selectedFrame - 1)}
+                      disabled={selectedFrame <= 1}
+                      aria-label="이전 프레임"
+                    >
+                      ◀
+                    </button>
+                    <img
+                      src={frameUrl(clip.clip_id, selectedFrame)}
+                      alt={`프레임 ${selectedFrame}`}
+                    />
+                    <button
+                      type="button"
+                      className="frame-nav"
+                      onClick={() => pickFrame(selectedFrame + 1)}
+                      disabled={selectedFrame >= clip.frame_count}
+                      aria-label="다음 프레임"
+                    >
+                      ▶
+                    </button>
+                  </div>
+                  <div className="game-time-row">
+                    <label className="inline">
+                      게임 시각
+                      <input
+                        type="text"
+                        className="time-input"
+                        placeholder="예: 8:32"
+                        value={gameTime}
+                        onChange={(e) => setGameTime(e.target.value)}
+                      />
+                    </label>
+                    {frameCvLoading && (
+                      <span className="muted small">자동 감지 중…</span>
+                    )}
+                    {!frameCvLoading && frameCv && (
+                      <span className="muted small">
+                        {frameCv.game_time
+                          ? `타이머 자동 감지: ${frameCv.game_time}`
+                          : '타이머 자동 감지 실패 — 직접 입력하세요'}
+                        {frameCv.frame_quality === 'low'
+                          ? ' · ⚠ 프레임 화질 낮음'
+                          : ''}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
               <div className="frame-grid">
                 {Array.from(
                   { length: clip.frame_count },
@@ -554,11 +614,7 @@ function App() {
                     className={`frame-thumb ${
                       selectedFrame === n ? 'active' : ''
                     }`}
-                    onClick={() => {
-                      setSelectedFrame(n)
-                      setResult(null)
-                      loadFrameCv(n)
-                    }}
+                    onClick={() => pickFrame(n)}
                   >
                     <img
                       src={frameUrl(clip.clip_id, n)}
@@ -569,33 +625,6 @@ function App() {
                   </button>
                 ))}
               </div>
-              {selectedFrame && (
-                <div className="game-time-row">
-                  <label className="inline">
-                    게임 시각
-                    <input
-                      type="text"
-                      className="time-input"
-                      placeholder="예: 8:32"
-                      value={gameTime}
-                      onChange={(e) => setGameTime(e.target.value)}
-                    />
-                  </label>
-                  {frameCvLoading && (
-                    <span className="muted small">자동 감지 중…</span>
-                  )}
-                  {!frameCvLoading && frameCv && (
-                    <span className="muted small">
-                      {frameCv.game_time
-                        ? `타이머 자동 감지: ${frameCv.game_time}`
-                        : '타이머 자동 감지 실패 — 직접 입력하세요'}
-                      {frameCv.frame_quality === 'low'
-                        ? ' · ⚠ 프레임 화질 낮음'
-                        : ''}
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
           )}
         </section>

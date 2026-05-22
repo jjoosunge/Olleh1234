@@ -8,6 +8,7 @@ import anthropic
 
 from app.db.database import PROJECT_ROOT
 from app.services.cache import get_cached, set_cached
+from app.services.history import save_analysis, search_good_analyses
 from app.services.rag import search_knowledge
 from app.services.riot_api import RiotAPIClient, RiotAPIError
 
@@ -306,6 +307,19 @@ def _format_notes(notes: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_good_examples(examples: list[dict]) -> str:
+    """과거에 사용자가 좋게 평가한 분석을 프롬프트 참고 예시로 포맷."""
+    lines = [
+        "=== 과거에 사용자가 좋게 평가한 분석 "
+        "(참고: 이 수준·접근 방식으로 분석하라) ==="
+    ]
+    for i, ex in enumerate(examples, 1):
+        lines.append("")
+        lines.append(f"[우수 예시 {i}] 질문: {ex.get('user_question', '')}")
+        lines.append(f"분석: {ex.get('analysis_text', '')}")
+    return "\n".join(lines)
+
+
 _POSITION_ORDER = {"TOP": 0, "JUNGLE": 1, "MIDDLE": 2, "BOTTOM": 3, "UTILITY": 4}
 
 
@@ -498,6 +512,8 @@ def analyze_clip(
     match_summary, user_desc = (
         _try_load_match(match_id, puuid) if match_id else (None, None)
     )
+    # 과거에 좋게 평가된 분석을 질문 유사도로 검색해 예시로 주입(in-context 학습)
+    good_examples = search_good_analyses(user_question, top_k=2)
 
     user_content: list[dict] = []
     if notes:
@@ -515,6 +531,10 @@ def analyze_clip(
                 "text": match_summary,
                 "cache_control": {"type": "ephemeral"},
             }
+        )
+    if good_examples:
+        user_content.append(
+            {"type": "text", "text": _format_good_examples(good_examples)}
         )
     if user_desc:
         user_content.append(
@@ -568,6 +588,7 @@ def analyze_clip(
         "minimaps_analyzed": n_mini,
         "frame_number": frame_number,
         "notes_referenced": len(notes),
+        "good_examples_used": len(good_examples),
         "match_id_used": match_id if match_summary else None,
         "model": model,
         "input_tokens": response.usage.input_tokens,
@@ -578,10 +599,33 @@ def analyze_clip(
         "stop_reason": response.stop_reason,
     }
 
+    # 분석 결과를 히스토리에 저장. 저장 실패가 분석 응답을 막지 않도록 격리.
+    analysis_id = None
+    try:
+        analysis_id = save_analysis(
+            clip_id=clip_id,
+            frame_number=frame_number,
+            match_id=match_id if match_summary else None,
+            puuid=puuid,
+            model=model,
+            user_question=user_question,
+            analysis_text=analysis_text,
+            metadata=metadata_out,
+            notes=notes,
+            examples_used=[ex["id"] for ex in good_examples],
+        )
+    except Exception as err:
+        print(f"[Analyze] save_analysis failed: {err}")
+
     mode = f"frame#{frame_number}" if frame_number is not None else "multi"
     print(
         f"[Analyze] clip={clip_id[:8]} mode={mode} frames={n_full} "
-        f"minimap={n_mini} notes={len(notes)} model={model} cost=${cost}"
+        f"minimap={n_mini} notes={len(notes)} examples={len(good_examples)} "
+        f"id={analysis_id} model={model} cost=${cost}"
     )
 
-    return {"analysis": analysis_text, "metadata": metadata_out}
+    return {
+        "analysis": analysis_text,
+        "analysis_id": analysis_id,
+        "metadata": metadata_out,
+    }

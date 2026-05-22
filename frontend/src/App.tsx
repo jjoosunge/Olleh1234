@@ -1,21 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import {
   analyze,
+  deleteAnalysis,
   durationSeconds,
   frameUrl,
   getMatch,
   getMatchIds,
   getSummoner,
+  listAnalyses,
   mapLimit,
+  rateAnalysis,
   uploadClip,
 } from './api'
 import type {
+  AnalysisSummary,
   AnalyzeResult,
   ClipMeta,
   MatchDetail,
   Participant,
+  Rating,
   Summoner,
 } from './api'
 
@@ -43,6 +48,70 @@ function fmtDate(ms: number | null): string {
 
 function findMe(m: MatchDetail, puuid: string): Participant | undefined {
   return m.participants.find((p) => p.puuid === puuid)
+}
+
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('ko-KR')
+}
+
+function ratingMark(r: Rating): string {
+  return r === 'up' ? '👍' : r === 'down' ? '👎' : '·'
+}
+
+function RatingRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: Rating
+  onChange: (v: Rating) => void
+}) {
+  return (
+    <div className="rating-row">
+      <span className="rating-label">{label}</span>
+      <button
+        type="button"
+        className={`rate-btn ${value === 'up' ? 'on up' : ''}`}
+        onClick={() => onChange(value === 'up' ? null : 'up')}
+      >
+        👍
+      </button>
+      <button
+        type="button"
+        className={`rate-btn ${value === 'down' ? 'on down' : ''}`}
+        onClick={() => onChange(value === 'down' ? null : 'down')}
+      >
+        👎
+      </button>
+    </div>
+  )
+}
+
+function RatingBlock({
+  reading,
+  coaching,
+  onRate,
+}: {
+  reading: Rating
+  coaching: Rating
+  onRate: (reading: Rating, coaching: Rating) => void
+}) {
+  return (
+    <div className="rating-block">
+      <RatingRow
+        label="장면·미니맵 판독"
+        value={reading}
+        onChange={(v) => onRate(v, coaching)}
+      />
+      <RatingRow
+        label="코칭"
+        value={coaching}
+        onChange={(v) => onRate(reading, v)}
+      />
+    </div>
+  )
 }
 
 function App() {
@@ -75,7 +144,16 @@ function App() {
 
   const [error, setError] = useState<string | null>(null)
 
+  // 분석 히스토리
+  const [history, setHistory] = useState<AnalysisSummary[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+
   const selectedMatch = matches.find((m) => m.matchId === selectedMatchId) ?? null
+  const resultRecord =
+    result?.analysis_id != null
+      ? history.find((h) => h.id === result.analysis_id) ?? null
+      : null
 
   async function handleSearch(e: FormEvent) {
     e.preventDefault()
@@ -158,10 +236,45 @@ function App() {
         model,
       )
       setResult(r)
+      loadHistory()
     } catch (e) {
       setError(errMsg(e))
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  async function loadHistory() {
+    setHistoryLoading(true)
+    try {
+      setHistory(await listAnalyses(50))
+    } catch {
+      // 히스토리 로드 실패가 메인 흐름을 막지 않도록 조용히 무시
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadHistory()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function handleRate(id: number, reading: Rating, coaching: Rating) {
+    try {
+      const updated = await rateAnalysis(id, reading, coaching)
+      setHistory((prev) => prev.map((h) => (h.id === id ? updated : h)))
+    } catch (e) {
+      setError(errMsg(e))
+    }
+  }
+
+  async function handleDeleteAnalysis(id: number) {
+    try {
+      await deleteAnalysis(id)
+      setHistory((prev) => prev.filter((h) => h.id !== id))
+    } catch (e) {
+      setError(errMsg(e))
     }
   }
 
@@ -418,14 +531,86 @@ function App() {
                   ? `선택 장면 ${result.metadata.frame_number}번`
                   : `프레임 ${result.metadata.frames_analyzed}장`}{' '}
                 · 미니맵 {result.metadata.minimaps_analyzed}장 · 코치노트{' '}
-                {result.metadata.notes_referenced}개 ·{' '}
+                {result.metadata.notes_referenced}개 · 학습예시{' '}
+                {result.metadata.good_examples_used}개 ·{' '}
                 {result.metadata.model} · ≈ $
                 {result.metadata.estimated_cost_usd}
               </p>
+              {result.analysis_id != null ? (
+                <RatingBlock
+                  reading={resultRecord?.rating_reading ?? null}
+                  coaching={resultRecord?.rating_coaching ?? null}
+                  onRate={(r, c) =>
+                    handleRate(result.analysis_id as number, r, c)
+                  }
+                />
+              ) : (
+                <p className="muted small">
+                  이 분석은 히스토리 저장에 실패했습니다.
+                </p>
+              )}
             </div>
           )}
         </section>
       )}
+
+      {/* 분석 히스토리 */}
+      <section className="card">
+        <h2>분석 히스토리</h2>
+        {historyLoading && history.length === 0 && (
+          <p className="muted">불러오는 중…</p>
+        )}
+        {!historyLoading && history.length === 0 && (
+          <p className="muted">아직 저장된 분석이 없습니다.</p>
+        )}
+        <ul className="history-list">
+          {history.map((h) => (
+            <li key={h.id} className="history-item">
+              <div className="history-head">
+                <button
+                  type="button"
+                  className="history-q"
+                  onClick={() =>
+                    setExpandedId(expandedId === h.id ? null : h.id)
+                  }
+                >
+                  <span className="hist-rating">
+                    판독 {ratingMark(h.rating_reading)} · 코칭{' '}
+                    {ratingMark(h.rating_coaching)}
+                  </span>
+                  <span className="hist-q-text">{h.user_question}</span>
+                </button>
+                <span className="muted small">
+                  {fmtDateTime(h.created_at)}
+                </span>
+              </div>
+              {expandedId === h.id && (
+                <div className="history-body">
+                  <p className="answer">{h.analysis_text}</p>
+                  <p className="muted small">
+                    {h.frame_number != null
+                      ? `선택 장면 ${h.frame_number}번`
+                      : '멀티프레임'}{' '}
+                    · {h.model}
+                  </p>
+                  <RatingBlock
+                    reading={h.rating_reading}
+                    coaching={h.rating_coaching}
+                    onRate={(r, c) => handleRate(h.id, r, c)}
+                  />
+                  <button
+                    type="button"
+                    className="ghost small-btn"
+                    onClick={() => handleDeleteAnalysis(h.id)}
+                  >
+                    삭제
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   )
 }

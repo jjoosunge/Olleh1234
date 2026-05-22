@@ -19,6 +19,7 @@ from app.services.analyzer import (
     _select_frame_indices,
     _summarize_match,
 )
+from app.services.history import _is_exemplary
 from app.services.riot_api import RiotAPIClient
 
 
@@ -388,6 +389,20 @@ class SingleFrameTest(unittest.TestCase):
             clip_dir = self._make_clip(tmp, frames=2, minimaps=set())
             with self.assertRaises(FileNotFoundError):
                 _load_single_frame_blocks(clip_dir, 9)
+
+
+class ExemplaryTest(unittest.TestCase):
+    """학습 풀(vec_analyses) 편입 조건: 판독·코칭 모두 👍."""
+
+    def test_both_up_is_exemplary(self):
+        self.assertTrue(_is_exemplary("up", "up"))
+
+    def test_partial_or_negative_not_exemplary(self):
+        self.assertFalse(_is_exemplary("up", None))
+        self.assertFalse(_is_exemplary(None, "up"))
+        self.assertFalse(_is_exemplary("up", "down"))
+        self.assertFalse(_is_exemplary("down", "down"))
+        self.assertFalse(_is_exemplary(None, None))
 
 
 if __name__ == "__main__":

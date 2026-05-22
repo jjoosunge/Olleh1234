@@ -42,22 +42,43 @@ export type ClipMeta = {
   original_kept: boolean
 }
 
+export type AnalysisMetadata = {
+  frames_analyzed: number
+  minimaps_analyzed: number
+  frame_number: number | null
+  notes_referenced: number
+  good_examples_used: number
+  match_id_used: string | null
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
+  estimated_cost_usd: number
+  stop_reason: string | null
+}
+
 export type AnalyzeResult = {
   analysis: string
-  metadata: {
-    frames_analyzed: number
-    minimaps_analyzed: number
-    frame_number: number | null
-    notes_referenced: number
-    match_id_used: string | null
-    model: string
-    input_tokens: number
-    output_tokens: number
-    cache_read_tokens: number
-    cache_creation_tokens: number
-    estimated_cost_usd: number
-    stop_reason: string | null
-  }
+  analysis_id: number | null
+  metadata: AnalysisMetadata
+}
+
+export type Rating = 'up' | 'down' | null
+
+export type AnalysisSummary = {
+  id: number
+  created_at: string
+  clip_id: string | null
+  frame_number: number | null
+  match_id: string | null
+  model: string | null
+  user_question: string
+  analysis_text: string
+  metadata: AnalysisMetadata
+  rating_reading: Rating
+  rating_coaching: Rating
+  rated_at: string | null
 }
 
 async function unwrap<T>(res: Response): Promise<T> {
@@ -170,4 +191,33 @@ export async function mapLimit<T, R>(
 export function durationSeconds(raw: number | null): number {
   const d = raw ?? 0
   return d > 10000 ? Math.floor(d / 1000) : d
+}
+
+// --- 분석 히스토리 / 평가 ---
+
+export async function listAnalyses(limit = 50): Promise<AnalysisSummary[]> {
+  const res = await fetch(`${BACKEND_URL}/api/analyses?limit=${limit}`)
+  const data = await unwrap<{ analyses: AnalysisSummary[] }>(res)
+  return data.analyses
+}
+
+// reading/coaching의 최종 상태를 항상 함께 보낸다 ('up'|'down'|null).
+export async function rateAnalysis(
+  id: number,
+  reading: Rating,
+  coaching: Rating,
+): Promise<AnalysisSummary> {
+  const res = await fetch(`${BACKEND_URL}/api/analyses/${id}/rating`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reading, coaching }),
+  })
+  return unwrap<AnalysisSummary>(res)
+}
+
+export async function deleteAnalysis(id: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/analyses/${id}`, {
+    method: 'DELETE',
+  })
+  await unwrap<{ deleted: boolean }>(res)
 }

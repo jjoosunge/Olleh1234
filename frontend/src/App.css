@@ -252,3 +252,103 @@ h3.lose {
 .frame-thumb.active {
   border-color: var(--accent);
 }
+
+/* 평가 (👍/👎) */
+.rating-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.rating-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rating-label {
+  font-size: 13px;
+  color: var(--text);
+  width: 130px;
+}
+
+.rate-btn {
+  padding: 4px 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.rate-btn.on.up {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #3b82f6;
+}
+
+.rate-btn.on.down {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+}
+
+/* 분석 히스토리 */
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-q {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: transparent;
+  border: none;
+  color: var(--text-h);
+  text-align: left;
+  padding: 2px 0;
+  min-width: 0;
+}
+
+.hist-rating {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.hist-q-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.small-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  margin-top: 8px;
+}

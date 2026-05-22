@@ -8,6 +8,7 @@ from app.api import rag as rag_router
 from app.api import riot as riot_router
 from app.api import clip as clip_router
 from app.api import analyze as analyze_router
+from app.api import history as history_router
 
 app = FastAPI(title="LoL Coach MVP")
 
@@ -26,6 +27,7 @@ app.include_router(rag_router.router)
 app.include_router(riot_router.router)
 app.include_router(clip_router.router)
 app.include_router(analyze_router.router)
+app.include_router(history_router.router)
 
 
 @app.get("/health")

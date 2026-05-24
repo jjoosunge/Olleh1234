@@ -64,7 +64,22 @@
       "Bash(curl -s -g -o /dev/null -w \"%{http_code}\\\\n\" \"http://[::1]:5173/\")",
       "Bash(curl -s http://localhost:5173/)",
       "Bash(curl -s http://localhost:5173/src/App.tsx)",
-      "Bash(curl -s http://localhost:5173/src/api.ts)"
+      "Bash(curl -s http://localhost:5173/src/api.ts)",
+      "Bash(git commit *)",
+      "Bash(git config *)",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" \"http://127.0.0.1:8000/api/summoner/Hide%20on%20bush/KR1\")",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" -X POST http://127.0.0.1:8000/api/search -H \"Content-Type: application/json\" -d '{\"query\":\"갱 가는 타이밍\",\"top_k\":2}')",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" -X POST http://127.0.0.1:8000/api/search -H \"Content-Type: application/json\" -d '{\"query\":\"gank timing jungle\",\"top_k\":2}')",
+      "Bash(curl -s http://127.0.0.1:8000/api/analyses/1 -o a1.json)",
+      "Bash(python -c \"import json; d=json.load\\(open\\('a1.json',encoding='utf-8'\\)\\); open\\('a1.txt','w',encoding='utf-8'\\).write\\(d['analysis_text']\\); print\\('히스토리 GET OK, analysis_text', len\\(d['analysis_text']\\), '자'\\)\")",
+      "Bash(curl -s http://127.0.0.1:8000/api/meta/stats)",
+      "Bash(curl -s \"http://127.0.0.1:8000/api/analyses\")",
+      "Bash(python -c \"import sys,json; print\\(len\\(json.load\\(sys.stdin\\)['analyses']\\), '건'\\)\")",
+      "Bash(curl -s -m 5 -w \"\\\\nHTTP %{http_code}\\\\n\" http://127.0.0.1:8000/health)",
+      "Bash(curl -s -m 5 -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -m 5 -w \" HTTP %{http_code}\\\\n\" http://127.0.0.1:8000/health)",
+      "Bash(curl -s -m 5 http://127.0.0.1:8000/api/meta/stats)",
+      "Bash(git remote *)"
     ]
   }
 }
